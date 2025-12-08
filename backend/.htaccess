@@ -1,0 +1,17 @@
+# Proteção do diretório backend
+<Files ".env">
+  Order allow,deny
+  Deny from all
+</Files>
+
+<FilesMatch "\.(sqlite|sqlite-shm|sqlite-wal)$">
+  Order allow,deny
+  Deny from all
+</FilesMatch>
+
+# Bloquear acesso direto aos arquivos TypeScript
+<FilesMatch "\.ts$">
+  Order allow,deny
+  Deny from all
+</FilesMatch>
+

@@ -1,0 +1,4 @@
+[15/11/2025 11:56:44,51] [NPM] Executando: npm install (frontend) 
+[15/11/2025 11:57:29,39] [OK] Dependencias do frontend instaladas 
+[15/11/2025 11:57:29,43] [NPM] Executando: npm run build (frontend) 
+[15/11/2025 11:57:36,55] [OK] Build do frontend concluido 

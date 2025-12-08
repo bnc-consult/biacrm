@@ -1,0 +1,4 @@
+[15/11/2025 12:18:49,77] [NPM] Executando: npm install (backend) 
+[15/11/2025 12:18:54,36] [OK] Dependencias do backend instaladas 
+[15/11/2025 12:18:54,41] [NPM] Executando: npm run build (backend) 
+[15/11/2025 12:18:57,73] [OK] Build do backend concluido 
