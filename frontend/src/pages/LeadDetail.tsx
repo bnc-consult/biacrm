@@ -28,6 +28,7 @@ interface Lead {
   created_at: string;
   updated_at?: string;
   product?: string;
+  custom_data?: any;
 }
 
 interface TimelineEvent {
@@ -56,6 +57,61 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   finalizado: { label: 'Finalizado', color: '#1f2937' },
 };
 
+// Função para obter o status de exibição baseado no status do backend e displayStatus
+const getDisplayStatus = (lead: Lead): string => {
+  // Se o status é 'fechamento', verificar o displayStatus no custom_data
+  if (lead.status === 'fechamento') {
+    const displayStatus = lead.custom_data?.displayStatus;
+    if (displayStatus === 'visita_concluida') {
+      return 'visita_concluida';
+    } else if (displayStatus === 'venda_ganha') {
+      return 'venda_ganha';
+    }
+    // Se não tem displayStatus definido, usar 'venda_ganha' como padrão
+    return 'venda_ganha';
+  }
+  
+  // Mapear os status do backend para os status de exibição
+  const statusMap: Record<string, string> = {
+    'novo_lead': 'sem_atendimento',
+    'em_contato': 'em_atendimento',
+    'proposta_enviada': 'visita_agendada',
+    'perdido': 'proposta',
+  };
+  
+  return statusMap[lead.status] || lead.status;
+};
+
+// Função para converter status de exibição para status do backend
+const getBackendStatus = (displayStatus: string, customData?: any): { status: string; custom_data?: any } => {
+  const custom_data = customData || {};
+  
+  switch (displayStatus) {
+    case 'sem_atendimento':
+      return { status: 'novo_lead' };
+    case 'em_atendimento':
+      return { status: 'em_contato' };
+    case 'visita_agendada':
+      return { status: 'proposta_enviada' };
+    case 'visita_concluida':
+      return { 
+        status: 'fechamento',
+        custom_data: { ...custom_data, displayStatus: 'visita_concluida' }
+      };
+    case 'venda_ganha':
+      return { 
+        status: 'fechamento',
+        custom_data: { ...custom_data, displayStatus: 'venda_ganha' }
+      };
+    case 'proposta':
+      return { status: 'perdido' };
+    case 'finalizado':
+      return { status: 'perdido' };
+    default:
+      return { status: displayStatus };
+  }
+};
+
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>();
   // const navigate = useNavigate();
@@ -76,25 +132,42 @@ export default function LeadDetail() {
     }
   }, [id]);
 
+  const parseLeadData = (leadData: any): Lead => {
+    // Parse custom_data se for string
+    let custom_data = leadData.custom_data;
+    if (custom_data && typeof custom_data === 'string') {
+      try {
+        custom_data = JSON.parse(custom_data);
+      } catch (e) {
+        custom_data = {};
+      }
+    }
+    return { ...leadData, custom_data };
+  };
+
   const fetchLeadDetail = async () => {
     try {
       // Primeiro tenta buscar o lead específico
       try {
         const response = await api.get(`/leads/${id}`);
-        setLead(response.data);
+        const parsedLead = parseLeadData(response.data);
+        setLead(parsedLead);
+        
+        const displayStatus = getDisplayStatus(parsedLead);
+        const statusLabel = statusConfig[displayStatus]?.label || 'Sem Atendimento';
         
         // Simular timeline
         setTimeline([
           {
             id: 1,
-            date: response.data.created_at,
-            description: `Lead ${response.data.name} entrou no status ${statusConfig[response.data.status]?.label || 'Sem Atendimento'}`,
+            date: parsedLead.created_at,
+            description: `Lead ${parsedLead.name} entrou no status ${statusLabel}`,
             source: 'SISTEMA',
           },
           {
             id: 2,
-            date: response.data.created_at,
-            description: `Importação: O cliente foi adicionado em: ${formatDateTime(response.data.created_at)}`,
+            date: parsedLead.created_at,
+            description: `Importação: O cliente foi adicionado em: ${formatDateTime(parsedLead.created_at)}`,
             source: 'SISTEMA',
           },
         ]);
@@ -104,18 +177,23 @@ export default function LeadDetail() {
           const leadsResponse = await api.get('/leads');
           const foundLead = leadsResponse.data.find((l: Lead) => l.id === parseInt(id || '0'));
           if (foundLead) {
-            setLead(foundLead);
+            const parsedLead = parseLeadData(foundLead);
+            setLead(parsedLead);
+            
+            const displayStatus = getDisplayStatus(parsedLead);
+            const statusLabel = statusConfig[displayStatus]?.label || 'Sem Atendimento';
+            
             setTimeline([
               {
                 id: 1,
-                date: foundLead.created_at,
-                description: `Lead ${foundLead.name} entrou no status ${statusConfig[foundLead.status]?.label || 'Sem Atendimento'}`,
+                date: parsedLead.created_at,
+                description: `Lead ${parsedLead.name} entrou no status ${statusLabel}`,
                 source: 'SISTEMA',
               },
               {
                 id: 2,
-                date: foundLead.created_at,
-                description: `Importação: O cliente foi adicionado em: ${formatDateTime(foundLead.created_at)}`,
+                date: parsedLead.created_at,
+                description: `Importação: O cliente foi adicionado em: ${formatDateTime(parsedLead.created_at)}`,
                 source: 'SISTEMA',
               },
             ]);
@@ -163,11 +241,33 @@ export default function LeadDetail() {
     return `${hours}:${minutes}`;
   };
 
-  const handleStatusChange = async (newStatus: string) => {
+  const handleStatusChange = async (displayStatus: string) => {
     if (!lead) return;
+    
     try {
-      await api.put(`/leads/${lead.id}`, { status: newStatus });
-      setLead({ ...lead, status: newStatus });
+      // Converter status de exibição para status do backend
+      const backendData = getBackendStatus(displayStatus, lead.custom_data);
+      
+      // Atualizar no backend
+      const response = await api.put(`/leads/${lead.id}`, {
+        status: backendData.status,
+        custom_data: backendData.custom_data
+      });
+      
+      // Parsear e atualizar o lead com os dados retornados
+      const parsedLead = parseLeadData(response.data);
+      setLead(parsedLead);
+      
+      // Adicionar evento à timeline
+      setTimeline(prev => [
+        {
+          id: Date.now(),
+          date: new Date().toISOString(),
+          description: `Status alterado para: ${statusConfig[displayStatus]?.label || displayStatus}`,
+          source: 'USUÁRIO',
+        },
+        ...prev
+      ]);
     } catch (error) {
       console.error('Error updating status:', error);
     }
@@ -241,7 +341,9 @@ export default function LeadDetail() {
     );
   }
 
-  const currentStatus = statusConfig[lead.status] || statusConfig.sem_atendimento;
+  // Obter o status de exibição baseado no status do backend
+  const displayStatus = getDisplayStatus(lead);
+  const currentStatus = statusConfig[displayStatus] || statusConfig.sem_atendimento;
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -442,23 +544,26 @@ export default function LeadDetail() {
             <div className="bg-white rounded-lg shadow-md p-6">
               <h3 className="text-sm font-bold text-gray-900 mb-4">Alterar status do lead</h3>
               <div className="space-y-2">
-                {statusOptions.map((status) => (
-                  <button
-                    key={status.id}
-                    onClick={() => handleStatusChange(status.id)}
-                    className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg transition-colors ${
-                      lead.status === status.id
-                        ? 'bg-blue-50 border-2 border-blue-600'
-                        : 'border border-gray-200 hover:bg-gray-50'
-                    }`}
-                  >
-                    <div
-                      className="w-4 h-4 rounded flex-shrink-0"
-                      style={{ backgroundColor: status.color }}
-                    />
-                    <span className="text-sm font-medium text-gray-900">{status.label}</span>
-                  </button>
-                ))}
+                {statusOptions.map((status) => {
+                  const isSelected = displayStatus === status.id;
+                  return (
+                    <button
+                      key={status.id}
+                      onClick={() => handleStatusChange(status.id)}
+                      className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg transition-colors ${
+                        isSelected
+                          ? 'bg-blue-50 border-2 border-blue-600'
+                          : 'border border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div
+                        className="w-4 h-4 rounded flex-shrink-0"
+                        style={{ backgroundColor: status.color }}
+                      />
+                      <span className="text-sm font-medium text-gray-900">{status.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
