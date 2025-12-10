@@ -88,6 +88,18 @@ export default function Leads() {
   const [isImporting, setIsImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   
+  // Estados para o modal de cadastro de Lead
+  const [showAddLeadModal, setShowAddLeadModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [formData, setFormData] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    origin: 'manual',
+    notes: ''
+  });
+  const [formError, setFormError] = useState<string | null>(null);
+  
   // Mock data para importações
   const [importTasks, setImportTasks] = useState<ImportTask[]>([
     {
@@ -100,6 +112,47 @@ export default function Leads() {
       status: 'em_progresso',
     },
   ]);
+
+  // Função para criar novo Lead
+  const handleCreateLead = async () => {
+    setFormError(null);
+    
+    if (!formData.name.trim() || !formData.phone.trim()) {
+      setFormError('Nome e telefone são obrigatórios');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const response = await api.post('/leads', {
+        name: formData.name.trim(),
+        phone: formData.phone.trim(),
+        email: formData.email.trim() || undefined,
+        origin: formData.origin,
+        notes: formData.notes.trim() || undefined,
+        status: 'novo_lead'
+      });
+
+      // Atualizar lista de leads
+      await fetchLeads();
+      
+      // Fechar modal e limpar formulário
+      setShowAddLeadModal(false);
+      setFormData({
+        name: '',
+        phone: '',
+        email: '',
+        origin: 'manual',
+        notes: ''
+      });
+      setFormError(null);
+    } catch (error: any) {
+      console.error('Erro ao criar lead:', error);
+      setFormError(error.response?.data?.message || 'Erro ao criar lead. Tente novamente.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleFileImport = async (file: File, fileType: 'csv' | 'excel') => {
     setIsImporting(true);
@@ -296,7 +349,10 @@ export default function Leads() {
               <FiList className="w-4 h-4" />
               <span>Ordem</span>
             </button>
-            <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            <button 
+              onClick={() => setShowAddLeadModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
               <FiPlus className="w-4 h-4" />
               <span>Adicionar +</span>
             </button>
@@ -648,6 +704,159 @@ export default function Leads() {
                   <FiChevronUp className="w-5 h-5 text-gray-400 transform -rotate-90" />
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Cadastro de Lead */}
+      {showAddLeadModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">Cadastrar Novo Lead</h2>
+              <button
+                onClick={() => {
+                  setShowAddLeadModal(false);
+                  setFormData({
+                    name: '',
+                    phone: '',
+                    email: '',
+                    origin: 'manual',
+                    notes: ''
+                  });
+                  setFormError(null);
+                }}
+                disabled={isSaving}
+                className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+              >
+                <FiX className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6">
+              {formError && (
+                <div className="mb-4 p-4 bg-red-50 text-red-800 rounded-lg border border-red-200">
+                  <span className="text-sm font-medium">{formError}</span>
+                </div>
+              )}
+
+              <div className="space-y-4">
+                {/* Nome */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Nome <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="Nome completo"
+                    disabled={isSaving}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+
+                {/* Telefone */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Telefone <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={formData.phone}
+                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    placeholder="(00) 00000-0000"
+                    disabled={isSaving}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+
+                {/* Email */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    placeholder="email@exemplo.com"
+                    disabled={isSaving}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+
+                {/* Origem */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Origem
+                  </label>
+                  <select
+                    value={formData.origin}
+                    onChange={(e) => setFormData({ ...formData, origin: e.target.value })}
+                    disabled={isSaving}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <option value="manual">Manual</option>
+                    <option value="facebook">Facebook</option>
+                    <option value="instagram">Instagram</option>
+                    <option value="google_ads">Google Ads</option>
+                    <option value="tiktok">TikTok</option>
+                    <option value="site">Site</option>
+                    <option value="indicacao">Indicação</option>
+                    <option value="outro">Outro</option>
+                  </select>
+                </div>
+
+                {/* Notas */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Notas
+                  </label>
+                  <textarea
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    placeholder="Observações sobre o lead..."
+                    rows={3}
+                    disabled={isSaving}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed resize-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-4 p-6 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setShowAddLeadModal(false);
+                  setFormData({
+                    name: '',
+                    phone: '',
+                    email: '',
+                    origin: 'manual',
+                    notes: ''
+                  });
+                  setFormError(null);
+                }}
+                disabled={isSaving}
+                className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleCreateLead}
+                disabled={isSaving || !formData.name.trim() || !formData.phone.trim()}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isSaving && (
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                )}
+                {isSaving ? 'Salvando...' : 'Salvar'}
+              </button>
             </div>
           </div>
         </div>

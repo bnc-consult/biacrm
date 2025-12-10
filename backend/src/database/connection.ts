@@ -4,15 +4,15 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const DATABASE_URL = process.env.DATABASE_URL || '';
+const DATABASE_URL = process.env.DATABASE_URL || 'sqlite:./database.sqlite';
 
 // Check if using SQLite
 let db: Database.Database | null = null;
 let pool: Pool | null = null;
 
-if (DATABASE_URL.startsWith('sqlite:')) {
+if (DATABASE_URL.startsWith('sqlite:') || !DATABASE_URL || DATABASE_URL === '') {
   // Use SQLite
-  const dbPath = DATABASE_URL.replace('sqlite:', '');
+  const dbPath = DATABASE_URL && DATABASE_URL !== '' ? DATABASE_URL.replace('sqlite:', '') : './database.sqlite';
   try {
     db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
