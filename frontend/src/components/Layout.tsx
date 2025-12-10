@@ -20,7 +20,9 @@ import {
   FiVolumeX,
   FiTrash2,
   FiRefreshCw,
-  FiInfo
+  FiInfo,
+  FiLogOut,
+  FiUser
 } from 'react-icons/fi';
 
 interface Notification {
@@ -41,6 +43,7 @@ export default function Layout() {
   const [activeNotificationTab, setActiveNotificationTab] = useState<'notificacoes' | 'atualizacoes'>('notificacoes');
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [muted, setMuted] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
@@ -63,6 +66,24 @@ export default function Layout() {
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // Fechar menu do usuário ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (showUserMenu && !target.closest('.user-menu-container')) {
+        setShowUserMenu(false);
+      }
+    };
+
+    if (showUserMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showUserMenu]);
 
   const fetchNotifications = async () => {
     try {
@@ -112,10 +133,10 @@ export default function Layout() {
     return `${date} - ${time}`;
   };
 
-  // const handleLogout = () => {
-  //   logout();
-  //   navigate('/login');
-  // };
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
 
   const leadsSubItems = [
     { path: '/leads', icon: FiList, label: 'Listagem' },
@@ -334,10 +355,38 @@ export default function Layout() {
                 </span>
               )}
             </button>
-            <button className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-              <span className="text-sm">Olá, {user?.name?.toUpperCase()}</span>
-            </button>
-            <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-semibold">
+            <div className="relative user-menu-container">
+              <button 
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <span className="text-sm">Olá, {user?.name?.toUpperCase()}</span>
+                <FiChevronDown className={`w-4 h-4 transition-transform ${showUserMenu ? 'transform rotate-180' : ''}`} />
+              </button>
+              
+              {/* Menu Dropdown */}
+              {showUserMenu && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+                  <div className="py-2">
+                    <div className="px-4 py-2 border-b border-gray-200">
+                      <p className="text-sm font-medium text-gray-900">{user?.name}</p>
+                      <p className="text-xs text-gray-500">{user?.email}</p>
+                    </div>
+                    <button
+                      onClick={handleLogout}
+                      className="w-full flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                    >
+                      <FiLogOut className="w-4 h-4" />
+                      <span>Sair</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div 
+              className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-semibold cursor-pointer hover:bg-blue-700 transition-colors user-menu-container"
+              onClick={() => setShowUserMenu(!showUserMenu)}
+            >
               {user?.name?.charAt(0).toUpperCase()}
             </div>
           </div>
