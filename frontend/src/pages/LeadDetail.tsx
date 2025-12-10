@@ -13,7 +13,8 @@ import {
   FiTrendingUp,
   FiMic,
   FiAlertTriangle,
-  FiFileText
+  FiFileText,
+  FiX
 } from 'react-icons/fi';
 
 interface Lead {
@@ -62,6 +63,10 @@ export default function LeadDetail() {
   const [loading, setLoading] = useState(true);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [scheduledContact, setScheduledContact] = useState('');
+  const [showNoteModal, setShowNoteModal] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [isSavingNote, setIsSavingNote] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (id && !isNaN(parseInt(id))) {
@@ -175,6 +180,56 @@ export default function LeadDetail() {
     }
   };
 
+  const handleAddNote = async () => {
+    if (!lead) return;
+    
+    setNoteError(null);
+    
+    if (!noteText.trim()) {
+      setNoteError('Por favor, digite uma nota');
+      return;
+    }
+
+    setIsSavingNote(true);
+    try {
+      // Se já existe nota, adicionar a nova nota com quebra de linha
+      const currentNotes = lead.notes || '';
+      const newNotes = currentNotes 
+        ? `${currentNotes}\n\n[${formatDateTime(new Date().toISOString())}] ${noteText.trim()}`
+        : `[${formatDateTime(new Date().toISOString())}] ${noteText.trim()}`;
+
+      const response = await api.put(`/leads/${lead.id}`, {
+        notes: newNotes
+      });
+
+      setLead({ ...lead, notes: response.data.notes });
+      setNoteText('');
+      setShowNoteModal(false);
+      setNoteError(null);
+      
+      // Atualizar timeline
+      setTimeline(prev => [
+        {
+          id: Date.now(),
+          date: new Date().toISOString(),
+          description: `Nota adicionada: ${noteText.trim()}`,
+          source: 'USUÁRIO',
+        },
+        ...prev
+      ]);
+    } catch (error: any) {
+      console.error('Erro ao adicionar nota:', error);
+      setNoteError(error.response?.data?.message || 'Erro ao salvar nota. Tente novamente.');
+    } finally {
+      setIsSavingNote(false);
+    }
+  };
+
+  const formatNotes = (notes?: string) => {
+    if (!notes) return [];
+    return notes.split('\n\n').filter(note => note.trim());
+  };
+
   if (loading || !lead) {
     return (
       <div className="p-8 flex items-center justify-center h-screen bg-gray-50">
@@ -248,8 +303,22 @@ export default function LeadDetail() {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-gray-700">Notas</label>
-                  <div className="mt-1 flex items-center gap-2 text-gray-500">
-                    <button className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+                  <div className="mt-1 space-y-2">
+                    {lead.notes ? (
+                      <div className="space-y-2">
+                        {formatNotes(lead.notes).map((note, index) => (
+                          <div key={index} className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                            <p className="text-sm text-gray-700 whitespace-pre-wrap">{note}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500 italic">Nenhuma nota adicionada ainda.</p>
+                    )}
+                    <button 
+                      onClick={() => setShowNoteModal(true)}
+                      className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
                       <FiPlus className="w-4 h-4" />
                       <span className="text-sm">Adicionar nota</span>
                     </button>
@@ -331,7 +400,10 @@ export default function LeadDetail() {
                   </div>
                 ))}
                 <div className="flex items-center gap-2 mt-4 pt-4 border-t border-gray-200">
-                  <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                  <button 
+                    onClick={() => setShowNoteModal(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
                     <FiMic className="w-4 h-4" />
                     <span className="text-sm">+ Adicionar nota</span>
                   </button>
@@ -392,6 +464,82 @@ export default function LeadDetail() {
           </div>
         </div>
       </div>
+
+      {/* Modal de Adicionar Nota */}
+      {showNoteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">Adicionar Nota</h2>
+              <button
+                onClick={() => {
+                  setShowNoteModal(false);
+                  setNoteText('');
+                  setNoteError(null);
+                }}
+                disabled={isSavingNote}
+                className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+              >
+                <FiX className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6">
+              {noteError && (
+                <div className="mb-4 p-4 bg-red-50 text-red-800 rounded-lg border border-red-200">
+                  <span className="text-sm font-medium">{noteError}</span>
+                </div>
+              )}
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Nota
+                  </label>
+                  <textarea
+                    value={noteText}
+                    onChange={(e) => setNoteText(e.target.value)}
+                    placeholder="Digite sua nota aqui..."
+                    rows={6}
+                    disabled={isSavingNote}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed resize-none"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    A nota será salva com data e hora automaticamente.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-4 p-6 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setShowNoteModal(false);
+                  setNoteText('');
+                  setNoteError(null);
+                }}
+                disabled={isSavingNote}
+                className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleAddNote}
+                disabled={isSavingNote || !noteText.trim()}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+              >
+                {isSavingNote && (
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                )}
+                {isSavingNote ? 'Salvando...' : 'Salvar Nota'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
