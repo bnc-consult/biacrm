@@ -71,12 +71,21 @@ const getDisplayStatus = (lead: Lead): string => {
     return 'venda_ganha';
   }
   
+  // Se o status é 'perdido', verificar o displayStatus no custom_data
+  if (lead.status === 'perdido') {
+    const displayStatus = lead.custom_data?.displayStatus;
+    if (displayStatus === 'proposta') {
+      return 'proposta';
+    }
+    // Se não tem displayStatus definido, usar 'finalizado' como padrão
+    return 'finalizado';
+  }
+  
   // Mapear os status do backend para os status de exibição
   const statusMap: Record<string, string> = {
     'novo_lead': 'sem_atendimento',
     'em_contato': 'em_atendimento',
     'proposta_enviada': 'visita_agendada',
-    'perdido': 'proposta',
   };
   
   return statusMap[lead.status] || lead.status;
@@ -104,7 +113,10 @@ const getBackendStatus = (displayStatus: string, customData?: any): { status: st
         custom_data: { ...custom_data, displayStatus: 'venda_ganha' }
       };
     case 'proposta':
-      return { status: 'perdido' };
+      return { 
+        status: 'perdido',
+        custom_data: { ...custom_data, displayStatus: 'proposta' }
+      };
     case 'finalizado':
       return { status: 'perdido' };
     default:
@@ -256,6 +268,9 @@ export default function LeadDetail() {
       // Parsear e atualizar o lead com os dados retornados
       const parsedLead = parseLeadData(response.data);
       setLead(parsedLead);
+      
+      // Disparar evento customizado para atualizar outras telas (como Andamento)
+      window.dispatchEvent(new CustomEvent('leadUpdated', { detail: { leadId: lead.id } }));
       
       // Adicionar evento à timeline
       setTimeline(prev => [

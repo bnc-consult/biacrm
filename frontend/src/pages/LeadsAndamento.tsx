@@ -38,6 +38,7 @@ const baseStatusColumns = [
   { id: 'em_contato', label: 'Em Atendimento', color: '#3b82f6', count: 0, backendStatus: 'em_contato' },
   { id: 'visita_agendada', label: 'Visita Agendada', color: '#60a5fa', count: 0, backendStatus: 'proposta_enviada' },
   { id: 'visita_concluida', label: 'Visita Concluída', color: '#14b8a6', count: 0, backendStatus: 'fechamento', displayStatus: 'visita_concluida' },
+  { id: 'proposta', label: 'Proposta', color: '#f97316', count: 0, backendStatus: 'perdido', displayStatus: 'proposta' },
   { id: 'venda_ganha', label: 'Venda Ganha', color: '#22c55e', count: 0, backendStatus: 'fechamento', displayStatus: 'venda_ganha' },
   { id: 'perdido', label: 'Perdido', color: '#f97316', count: 0, backendStatus: 'perdido' },
 ];
@@ -237,9 +238,16 @@ export default function LeadsAndamento() {
     };
     window.addEventListener('funnelOrderChanged', handleCustomStorageChange);
     
+    // Listener para quando um lead é atualizado em outra tela (ex: LeadDetail)
+    const handleLeadUpdated = () => {
+      fetchLeads();
+    };
+    window.addEventListener('leadUpdated', handleLeadUpdated);
+    
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('funnelOrderChanged', handleCustomStorageChange);
+      window.removeEventListener('leadUpdated', handleLeadUpdated);
     };
   }, []);
 
@@ -360,6 +368,9 @@ export default function LeadsAndamento() {
         status: targetColumn.backendStatus,
         custom_data: newCustomData
       });
+      
+      // Disparar evento customizado para atualizar outras telas (ex: LeadDetail)
+      window.dispatchEvent(new CustomEvent('leadUpdated', { detail: { leadId } }));
     } catch (error) {
       console.error('Error updating lead status:', error);
       // Em caso de erro, reverter o estado local
@@ -390,6 +401,16 @@ export default function LeadsAndamento() {
       return statusColumns.find(col => col.id === 'venda_ganha');
     }
     
+    // Se o lead tem status 'perdido', verificar o displayStatus no custom_data
+    if (lead.status === 'perdido') {
+      const displayStatus = lead.custom_data?.displayStatus;
+      if (displayStatus === 'proposta') {
+        return statusColumns.find(col => col.id === 'proposta');
+      }
+      // Se não tem displayStatus definido, usar 'perdido' como padrão
+      return statusColumns.find(col => col.id === 'perdido');
+    }
+    
     // Para outros status, encontrar a coluna correspondente
     return statusColumns.find(col => col.backendStatus === lead.status);
   };
@@ -406,7 +427,7 @@ export default function LeadsAndamento() {
         return false;
       }
       
-      // Se a coluna tem um displayStatus específico (visita_concluida ou venda_ganha),
+      // Se a coluna tem um displayStatus específico (visita_concluida, venda_ganha ou proposta),
       // verificar se o lead tem o mesmo displayStatus no custom_data
       if (column.displayStatus) {
         const leadDisplayStatus = lead.custom_data?.displayStatus;
@@ -417,6 +438,14 @@ export default function LeadsAndamento() {
         }
         // Caso contrário, verificar se o displayStatus corresponde
         return leadDisplayStatus === column.displayStatus;
+      }
+      
+      // Para colunas sem displayStatus, verificar se o lead também não tem displayStatus
+      // (para evitar que leads com displayStatus apareçam em colunas que não o esperam)
+      const leadDisplayStatus = lead.custom_data?.displayStatus;
+      if (leadDisplayStatus) {
+        // Se o lead tem displayStatus mas a coluna não espera um, não incluir
+        return false;
       }
       
       // Para outras colunas sem displayStatus, apenas verificar o backendStatus
