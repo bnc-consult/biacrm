@@ -6,7 +6,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 
 const router = express.Router();
 
-// Register
+// Register class
 router.post('/register', async (req, res) => {
   try {
     const { name, email, password, role = 'atendente' } = req.body;
