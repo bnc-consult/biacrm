@@ -1,6 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import {
+  DndContext,
+  DragEndEvent,
+  closestCenter,
+  useSensor,
+  useSensors,
+  PointerSensor,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { 
   FiSearch, 
   FiPlus, 
@@ -15,7 +29,8 @@ import {
   FiX,
   FiRefreshCw,
   FiFileText,
-  FiTrash2
+  FiTrash2,
+  FiMenu
 } from 'react-icons/fi';
 
 interface Lead {
@@ -76,6 +91,52 @@ interface ImportTask {
   status: 'em_progresso' | 'concluido' | 'erro';
 }
 
+interface TableColumn {
+  id: string;
+  label: string;
+  sortable: boolean;
+  visible: boolean;
+}
+
+// Componente para item de coluna ordenável
+function SortableColumnItem({ column }: { column: TableColumn }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: column.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 cursor-move"
+    >
+      <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
+        <FiMenu className="w-5 h-5 text-gray-400" />
+      </div>
+      <span className="flex-1 text-sm font-medium text-gray-900">{column.label || '(Sem título)'}</span>
+    </div>
+  );
+}
+
+// Função auxiliar para mover item no array
+function arrayMove<T>(array: T[], oldIndex: number, newIndex: number): T[] {
+  const newArray = [...array];
+  const [removed] = newArray.splice(oldIndex, 1);
+  newArray.splice(newIndex, 0, removed);
+  return newArray;
+}
+
 export default function Leads() {
   const navigate = useNavigate();
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -100,6 +161,66 @@ export default function Leads() {
   });
   const [formError, setFormError] = useState<string | null>(null);
   
+  // Configuração de colunas da tabela
+  const defaultColumns = [
+    { id: 'checkbox', label: '', sortable: false, visible: true },
+    { id: 'name', label: 'Nome', sortable: true, visible: true },
+    { id: 'phone', label: 'Telefone', sortable: false, visible: true },
+    { id: 'product', label: 'Produto', sortable: true, visible: true },
+    { id: 'created_at', label: 'Criado em', sortable: false, visible: true },
+    { id: 'status', label: 'Status', sortable: true, visible: true },
+    { id: 'action', label: 'Ação', sortable: false, visible: true },
+  ];
+
+  // Carregar ordem das colunas do localStorage
+  const loadColumnOrder = (): TableColumn[] => {
+    const saved = localStorage.getItem('leadsTableColumnOrder');
+    if (saved) {
+      try {
+        const savedOrder: string[] = JSON.parse(saved);
+        // Manter apenas colunas válidas
+        const columnMap = new Map(defaultColumns.map((col: TableColumn) => [col.id, col]));
+        return savedOrder
+          .map((id: string) => columnMap.get(id))
+          .filter((col): col is TableColumn => Boolean(col))
+          .concat(defaultColumns.filter((col: TableColumn) => !savedOrder.includes(col.id)));
+      } catch (e) {
+        console.error('Error loading column order:', e);
+      }
+    }
+    return defaultColumns;
+  };
+
+  const [columns, setColumns] = useState(loadColumnOrder);
+  const [showColumnOrderModal, setShowColumnOrderModal] = useState(false);
+  
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
+  );
+
+  const handleColumnDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      setColumns((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+
+        const newItems = arrayMove(items, oldIndex, newIndex);
+
+        // Salvar ordem no localStorage
+        const columnOrder = newItems.map(col => col.id);
+        localStorage.setItem('leadsTableColumnOrder', JSON.stringify(columnOrder));
+
+        return newItems;
+      });
+    }
+  };
+
   // Mock data para importações
   const [importTasks, setImportTasks] = useState<ImportTask[]>([
     {
@@ -345,7 +466,11 @@ export default function Leads() {
           
           {/* Action Buttons */}
           <div className="flex items-center gap-2">
-            <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            <button 
+              onClick={() => setShowColumnOrderModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              title="Configurar ordem das colunas"
+            >
               <FiList className="w-4 h-4" />
               <span>Ordem</span>
             </button>
@@ -395,44 +520,64 @@ export default function Leads() {
           <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="px-4 py-3 text-left">
-                  <input
-                    type="checkbox"
-                    checked={selectedLeads.length === filteredLeads.length && filteredLeads.length > 0}
-                    onChange={(e) => handleSelectAll(e.target.checked)}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                </th>
-                <th className="px-4 py-3 text-left">
-                  <button
-                    onClick={() => handleSort('name')}
-                    className="flex items-center gap-1 text-sm font-semibold text-gray-700 hover:text-gray-900"
-                  >
-                    Nome
-                    {getSortIcon('name')}
-                  </button>
-                </th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Telefone</th>
-                <th className="px-4 py-3 text-left">
-                  <button
-                    onClick={() => handleSort('product')}
-                    className="flex items-center gap-1 text-sm font-semibold text-gray-700 hover:text-gray-900"
-                  >
-                    Produto
-                    {getSortIcon('product')}
-                  </button>
-                </th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Criado em</th>
-                <th className="px-4 py-3 text-left">
-                  <button
-                    onClick={() => handleSort('status')}
-                    className="flex items-center gap-1 text-sm font-semibold text-gray-700 hover:text-gray-900"
-                  >
-                    Status
-                    {getSortIcon('status')}
-                  </button>
-                </th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Ação</th>
+                {columns.map((column: TableColumn) => {
+                  if (column.id === 'checkbox') {
+                    return (
+                      <th key={column.id} className="px-4 py-3 text-left">
+                        <input
+                          type="checkbox"
+                          checked={selectedLeads.length === filteredLeads.length && filteredLeads.length > 0}
+                          onChange={(e) => handleSelectAll(e.target.checked)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                      </th>
+                    );
+                  }
+                  if (column.id === 'name') {
+                    return (
+                      <th key={column.id} className="px-4 py-3 text-left">
+                        <button
+                          onClick={() => handleSort('name')}
+                          className="flex items-center gap-1 text-sm font-semibold text-gray-700 hover:text-gray-900"
+                        >
+                          {column.label}
+                          {getSortIcon('name')}
+                        </button>
+                      </th>
+                    );
+                  }
+                  if (column.id === 'product') {
+                    return (
+                      <th key={column.id} className="px-4 py-3 text-left">
+                        <button
+                          onClick={() => handleSort('product')}
+                          className="flex items-center gap-1 text-sm font-semibold text-gray-700 hover:text-gray-900"
+                        >
+                          {column.label}
+                          {getSortIcon('product')}
+                        </button>
+                      </th>
+                    );
+                  }
+                  if (column.id === 'status') {
+                    return (
+                      <th key={column.id} className="px-4 py-3 text-left">
+                        <button
+                          onClick={() => handleSort('status')}
+                          className="flex items-center gap-1 text-sm font-semibold text-gray-700 hover:text-gray-900"
+                        >
+                          {column.label}
+                          {getSortIcon('status')}
+                        </button>
+                      </th>
+                    );
+                  }
+                  return (
+                    <th key={column.id} className="px-4 py-3 text-left text-sm font-semibold text-gray-700">
+                      {column.label}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -441,38 +586,77 @@ export default function Leads() {
                 const status = statusConfig[displayStatus] || statusConfig.sem_atendimento;
                 return (
                   <tr key={lead.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedLeads.includes(lead.id)}
-                        onChange={(e) => handleSelectLead(lead.id, e.target.checked)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                    </td>
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900">{lead.name}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{lead.phone}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{lead.product || '--'}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{formatDate(lead.created_at)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${status.bgColor} ${status.textColor}`}>
-                          {status.label}
-                        </span>
-                        {lead.isNew && (
-                          <span className="px-2 py-0.5 bg-yellow-200 text-yellow-800 text-xs font-medium rounded">
-                            Novo!
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button 
-                        onClick={() => navigate(`/leads/${lead.id}`)}
-                        className="text-blue-600 hover:text-blue-700"
-                      >
-                        <FiEye className="w-5 h-5" />
-                      </button>
-                    </td>
+                    {columns.map((column: TableColumn) => {
+                      if (column.id === 'checkbox') {
+                        return (
+                          <td key={column.id} className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedLeads.includes(lead.id)}
+                              onChange={(e) => handleSelectLead(lead.id, e.target.checked)}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                          </td>
+                        );
+                      }
+                      if (column.id === 'name') {
+                        return (
+                          <td key={column.id} className="px-4 py-3 text-sm font-medium text-gray-900">
+                            {lead.name}
+                          </td>
+                        );
+                      }
+                      if (column.id === 'phone') {
+                        return (
+                          <td key={column.id} className="px-4 py-3 text-sm text-gray-600">
+                            {lead.phone}
+                          </td>
+                        );
+                      }
+                      if (column.id === 'product') {
+                        return (
+                          <td key={column.id} className="px-4 py-3 text-sm text-gray-600">
+                            {lead.product || '--'}
+                          </td>
+                        );
+                      }
+                      if (column.id === 'created_at') {
+                        return (
+                          <td key={column.id} className="px-4 py-3 text-sm text-gray-600">
+                            {formatDate(lead.created_at)}
+                          </td>
+                        );
+                      }
+                      if (column.id === 'status') {
+                        return (
+                          <td key={column.id} className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className={`px-3 py-1 rounded-full text-xs font-medium ${status.bgColor} ${status.textColor}`}>
+                                {status.label}
+                              </span>
+                              {lead.isNew && (
+                                <span className="px-2 py-0.5 bg-yellow-200 text-yellow-800 text-xs font-medium rounded">
+                                  Novo!
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      }
+                      if (column.id === 'action') {
+                        return (
+                          <td key={column.id} className="px-4 py-3">
+                            <button 
+                              onClick={() => navigate(`/leads/${lead.id}`)}
+                              className="text-blue-600 hover:text-blue-700"
+                            >
+                              <FiEye className="w-5 h-5" />
+                            </button>
+                          </td>
+                        );
+                      }
+                      return null;
+                    })}
                   </tr>
                 );
               })}
@@ -704,6 +888,67 @@ export default function Leads() {
                   <FiChevronUp className="w-5 h-5 text-gray-400 transform -rotate-90" />
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Ordenação de Colunas */}
+      {showColumnOrderModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">Configurar Ordem das Colunas</h2>
+              <button
+                onClick={() => setShowColumnOrderModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <FiX className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-4">
+                Arraste as colunas para reordená-las na tabela de Leads.
+              </p>
+
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleColumnDragEnd}
+              >
+                <SortableContext
+                  items={columns.map((col: TableColumn) => col.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="space-y-2">
+                    {columns.map((column: TableColumn) => (
+                      <SortableColumnItem key={column.id} column={column} />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-4 p-6 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setColumns(defaultColumns);
+                  localStorage.removeItem('leadsTableColumnOrder');
+                }}
+                className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Restaurar Padrão
+              </button>
+              <button
+                onClick={() => setShowColumnOrderModal(false)}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Fechar
+              </button>
             </div>
           </div>
         </div>

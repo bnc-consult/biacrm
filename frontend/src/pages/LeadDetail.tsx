@@ -114,7 +114,6 @@ const getBackendStatus = (displayStatus: string, customData?: any): { status: st
 
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>();
-  // const navigate = useNavigate();
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
