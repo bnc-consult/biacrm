@@ -306,6 +306,7 @@ export default function Integrations() {
   const [webhookUrl, setWebhookUrl] = useState('');
   const [editingWebhookId, setEditingWebhookId] = useState<string | null>(null);
   const [editingFacebookId, setEditingFacebookId] = useState<string | null>(null);
+  const [pendingFacebookData, setPendingFacebookData] = useState<{ access_token: string; page_id: string; page_name?: string; expires_in?: number } | null>(null);
 
   // Filtrar integrações pela aba ativa
   const activeIntegrations = integrations.filter(integration => integration.tab === activeTab);
@@ -371,75 +372,167 @@ export default function Integrations() {
     alert('Copiado para a área de transferência!');
   };
 
-  // Conectar conta do Facebook
-  const handleFacebookConnect = () => {
-    if (!facebookTitle.trim()) {
+  // Carregar integrações do Facebook do backend
+  const loadFacebookIntegrations = useCallback(async () => {
+    try {
+      console.log('📡 Buscando integrações do Facebook no backend...');
+      const response = await api.get('/integrations/facebook/list');
+      console.log('📥 Resposta do backend:', response.data);
+      
+      if (response.data.success) {
+        const integrations = response.data.integrations || [];
+        console.log(`📋 Encontradas ${integrations.length} integrações no backend`);
+        
+        if (integrations.length > 0) {
+          // Converter formato do backend para formato do frontend
+          const formattedIntegrations: FacebookIntegration[] = integrations.map((integration: any) => ({
+            id: `fb_${integration.id}`,
+            title: integration.title,
+            accountName: integration.page_name || 'Conta Pessoal',
+            accountEmail: user?.email || '',
+            connectedAt: integration.created_at,
+            status: integration.status || 'active'
+          }));
+          
+          console.log('✅ Integrações formatadas:', formattedIntegrations);
+          setFacebookIntegrations(formattedIntegrations);
+          setIsFacebookLoggedIn(true);
+          localStorage.setItem('facebookIntegrations', JSON.stringify(formattedIntegrations));
+          setRefreshKey(prev => prev + 1); // Forçar atualização do componente
+          console.log(`✅ ${formattedIntegrations.length} integrações do Facebook carregadas e exibidas`);
+        } else {
+          console.warn('⚠️ Nenhuma integração encontrada no backend');
+          setFacebookIntegrations([]);
+          setIsFacebookLoggedIn(false);
+          localStorage.removeItem('facebookIntegrations');
+        }
+      } else {
+        console.error('❌ Backend retornou success=false:', response.data);
+      }
+    } catch (error: any) {
+      console.error('❌ Erro ao carregar integrações do Facebook do backend:', error);
+      // Fallback para localStorage se o backend falhar
+      const savedIntegrations = localStorage.getItem('facebookIntegrations');
+      if (savedIntegrations) {
+        try {
+          const parsed = JSON.parse(savedIntegrations);
+          console.log('📦 Carregando do localStorage:', parsed.length, 'integrações');
+          setFacebookIntegrations(parsed);
+          setIsFacebookLoggedIn(parsed.length > 0);
+        } catch (e) {
+          console.error('❌ Erro ao carregar integrações do Facebook do localStorage:', e);
+        }
+      }
+    }
+  }, [user?.email]);
+
+  // Conectar conta do Facebook usando dados do OAuth
+  const handleFacebookConnect = async (facebookData?: { access_token: string; page_id: string; page_name?: string; expires_in?: number }, titleOverride?: string) => {
+    const titleToUse = titleOverride || facebookTitle;
+    
+    if (!titleToUse || !titleToUse.trim()) {
       alert('Por favor, preencha o título da integração primeiro');
       return;
     }
 
-    const now = new Date();
-    
-    if (editingFacebookId) {
-      // Atualizar integração existente
-      const updatedIntegrations = facebookIntegrations.map(integration =>
-        integration.id === editingFacebookId
-          ? { ...integration, title: facebookTitle }
-          : integration
-      );
-      setFacebookIntegrations(updatedIntegrations);
-      localStorage.setItem('facebookIntegrations', JSON.stringify(updatedIntegrations));
-      alert('Integração do Facebook atualizada com sucesso!');
-    } else {
-      // Criar nova integração
-      const newIntegration: FacebookIntegration = {
-        id: `fb_${Date.now()}`,
-        title: facebookTitle,
-        accountName: user?.name || 'Usuário',
-        accountEmail: facebookEmail || user?.email || '',
-        connectedAt: now.toISOString(),
-        status: 'active'
-      };
+    // Usar dados pendentes do OAuth se não foram fornecidos diretamente
+    const dataToUse = facebookData || pendingFacebookData;
 
-      const updatedIntegrations = [...facebookIntegrations, newIntegration];
-      setFacebookIntegrations(updatedIntegrations);
-      setIsFacebookLoggedIn(true);
-      localStorage.setItem('facebookLoggedIn', 'true');
-      localStorage.setItem('facebookIntegrations', JSON.stringify(updatedIntegrations));
-      
-      console.log('Nova integração do Facebook adicionada:', newIntegration);
-      console.log('Todas as integrações:', updatedIntegrations);
-      
-      alert('Conta do Facebook conectada com sucesso!');
-    }
-    
-    setShowFacebookPermissionsModal(false);
-    setShowFacebookAccountModal(false);
-    setShowFacebookModal(false);
-    setFacebookTitle('');
-    setFacebookEmail('');
-    setFacebookPassword('');
-    setEditingFacebookId(null);
-    
-    // Mudar para a aba de entradas para mostrar a integração
-    setActiveTab('entradas');
-  };
-
-  // Fazer login no Facebook
-  const handleFacebookLogin = () => {
-    if (!facebookEmail.trim() || !facebookPassword.trim()) {
-      alert('Por favor, preencha o email e senha do Facebook');
+    // Se não há dados do OAuth, significa que está sendo chamado sem autenticação válida
+    if (!dataToUse || !dataToUse.access_token) {
+      alert('Dados de autenticação do Facebook não fornecidos. Por favor, autorize novamente através do OAuth.');
       return;
     }
 
-    // Simular login do Facebook
-    // Em produção, isso seria uma chamada à API do Facebook
-    setIsFacebookLoggedIn(true);
-    localStorage.setItem('facebookLoggedIn', 'true');
-    setShowFacebookLoginModal(false);
-    
-    // Após login, mostrar modal de permissões novamente
-    setShowFacebookPermissionsModal(true);
+    // Se não houver page_id, o backend vai usar o ID do usuário como fallback
+    // Isso permite criar integração mesmo sem páginas do Facebook
+
+    try {
+      // Validar token com o backend antes de salvar
+      const response = await api.post('/integrations/facebook/connect', {
+        title: titleToUse,
+        access_token: dataToUse.access_token,
+        page_id: dataToUse.page_id,
+        page_name: dataToUse.page_name,
+        expires_in: dataToUse.expires_in
+      });
+
+      if (!response.data.success) {
+        throw new Error('Falha ao conectar conta do Facebook');
+      }
+
+      console.log('✅ Integração criada com sucesso no backend:', response.data);
+      
+      // Fechar modais primeiro
+      setShowFacebookPermissionsModal(false);
+      setShowFacebookAccountModal(false);
+      setShowFacebookModal(false);
+      setFacebookTitle('');
+      setFacebookEmail('');
+      setFacebookPassword('');
+      setEditingFacebookId(null);
+      setPendingFacebookData(null);
+      
+      // Mudar para a aba de entradas antes de recarregar
+      setActiveTab('entradas');
+      
+      // Recarregar integrações do backend após criar/atualizar
+      console.log('🔄 Recarregando integrações do backend...');
+      await loadFacebookIntegrations();
+      
+      // Forçar atualização do componente
+      // O React vai re-renderizar automaticamente quando setFacebookIntegrations for chamado
+      console.log('✅ Processo de criação concluído. Aguardando atualização do estado...');
+      
+      // Aguardar um pouco para garantir que o estado foi atualizado
+      setTimeout(() => {
+        // Recarregar novamente para garantir que está sincronizado
+        loadFacebookIntegrations().then(() => {
+          console.log('✅ Integrações recarregadas após criação');
+          alert('Conta do Facebook conectada com sucesso!');
+        });
+      }, 500);
+    } catch (error: any) {
+      console.error('Erro ao conectar Facebook:', error);
+      const errorMessage = error.response?.data?.message || 
+                          error.message || 
+                          'Erro ao conectar conta do Facebook';
+      alert('Erro ao conectar: ' + errorMessage);
+    }
+  };
+
+  // Iniciar autenticação OAuth do Facebook
+  const handleFacebookLogin = async () => {
+    try {
+      // Obter URL de autorização OAuth do Facebook
+      const response = await api.get('/integrations/facebook/oauth/url');
+      
+      const { authUrl } = response.data;
+      
+      if (!authUrl) {
+        throw new Error('URL de autorização não retornada pelo servidor');
+      }
+      
+      // Fechar modal antes de redirecionar
+      setShowFacebookLoginModal(false);
+      setShowFacebookPermissionsModal(false);
+      
+      // Redirecionar para autorização OAuth do Facebook
+      // O usuário verá uma tela de login do Facebook onde pode usar suas credenciais
+      window.location.href = authUrl;
+    } catch (error: any) {
+      console.error('Erro ao iniciar conexão Facebook:', error);
+      const errorMessage = error.response?.data?.message || 
+                          error.message || 
+                          'Erro ao iniciar conexão';
+      
+      // Mostrar mensagem de erro informativa
+      if (errorMessage.includes('não configurado') || errorMessage.includes('Sistema não configurado')) {
+        alert('Sistema não configurado. Entre em contato com o suporte técnico para configurar a integração com Facebook.');
+      } else {
+        alert('Erro ao conectar Facebook: ' + errorMessage);
+      }
+    }
   };
 
   // Conectar conta do TikTok
@@ -969,20 +1062,10 @@ export default function Integrations() {
     }
   };
 
-  // Carregar integrações do Facebook salvas
+  // Carregar integrações do Facebook ao montar o componente
   useEffect(() => {
-    const savedIntegrations = localStorage.getItem('facebookIntegrations');
-    if (savedIntegrations) {
-      try {
-        const parsed = JSON.parse(savedIntegrations);
-        setFacebookIntegrations(parsed);
-        setIsFacebookLoggedIn(parsed.length > 0);
-        console.log('Integrações do Facebook carregadas:', parsed);
-      } catch (e) {
-        console.error('Erro ao carregar integrações do Facebook:', e);
-      }
-    }
-  }, []);
+    loadFacebookIntegrations();
+  }, [loadFacebookIntegrations]);
 
   // Carregar integrações do TikTok salvas
   useEffect(() => {
@@ -1110,6 +1193,126 @@ export default function Integrations() {
       // Limpar parâmetros de erro
       const newParams = new URLSearchParams(searchParams);
       newParams.delete('instagram_error');
+      setSearchParams(newParams, { replace: true });
+    }
+
+    // Processar callback do Facebook OAuth
+    const facebookSuccess = searchParams.get('facebook_success');
+    const facebookError = searchParams.get('facebook_error');
+    const facebookAccessToken = searchParams.get('access_token');
+    const facebookExpiresIn = searchParams.get('expires_in');
+    const facebookPages = searchParams.get('pages');
+    const facebookWarning = searchParams.get('warning');
+
+    // IMPORTANTE: Verificar erro ANTES de verificar sucesso
+    if (facebookError) {
+      const errorMessage = decodeURIComponent(facebookError);
+      
+      // Mostrar mensagem de erro mais clara
+      alert(`❌ Erro na autenticação do Facebook\n\n${errorMessage}\n\nPor favor, verifique seu login e senha do Facebook e tente novamente.`);
+      
+      // Limpar parâmetros de erro
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('facebook_error');
+      setSearchParams(newParams, { replace: true });
+    } else if (facebookSuccess === 'true' && facebookAccessToken) {
+      const processFacebookCallback = async () => {
+        try {
+          const pages = facebookPages ? JSON.parse(decodeURIComponent(facebookPages)) : [];
+          const expiresIn = facebookExpiresIn ? parseInt(facebookExpiresIn) : undefined;
+
+          // Se houver warning, mostrar ao usuário
+          if (facebookWarning) {
+            const warningMessage = decodeURIComponent(facebookWarning);
+            console.warn('Facebook warning:', warningMessage);
+          }
+
+          // Se não houver páginas, permitir criar integração mesmo assim
+          if (!pages || pages.length === 0) {
+            // Criar integração usando o token do usuário diretamente
+            // O backend vai usar o ID do usuário do Facebook como page_id
+            const defaultTitle = 'Integração Facebook - Conta Pessoal';
+            
+            // Criar integração automaticamente com título padrão
+            await handleFacebookConnect({
+              access_token: facebookAccessToken,
+              page_id: '',
+              page_name: 'Conta Pessoal',
+              expires_in: expiresIn
+            }, defaultTitle);
+
+            // Limpar parâmetros da URL
+            const newParams = new URLSearchParams(searchParams);
+            newParams.delete('facebook_success');
+            newParams.delete('access_token');
+            newParams.delete('expires_in');
+            newParams.delete('pages');
+            newParams.delete('warning');
+            setSearchParams(newParams, { replace: true });
+            
+            return;
+          }
+
+          // Usar a primeira página disponível
+          const firstPage = pages[0];
+          
+          // Validar se a página tem dados válidos
+          if (!firstPage || !firstPage.id) {
+            alert('❌ Erro: Dados da página inválidos. Por favor, verifique seu login e senha do Facebook e tente novamente.');
+            
+            const newParams = new URLSearchParams(searchParams);
+            newParams.delete('facebook_success');
+            newParams.delete('access_token');
+            newParams.delete('expires_in');
+            newParams.delete('pages');
+            newParams.delete('warning');
+            setSearchParams(newParams, { replace: true });
+            return;
+          }
+
+          const pageAccessToken = firstPage.access_token || facebookAccessToken;
+
+          // Criar título padrão baseado no nome da página
+          const defaultTitle = `Integração Facebook - ${firstPage.name || 'Conta Pessoal'}`;
+
+          // Criar integração automaticamente após autenticação bem-sucedida
+          await handleFacebookConnect({
+            access_token: pageAccessToken,
+            page_id: firstPage.id,
+            page_name: firstPage.name,
+            expires_in: expiresIn
+          }, defaultTitle);
+
+          // Limpar parâmetros da URL
+          const newParams = new URLSearchParams(searchParams);
+          newParams.delete('facebook_success');
+          newParams.delete('access_token');
+          newParams.delete('expires_in');
+          newParams.delete('pages');
+          newParams.delete('warning');
+          setSearchParams(newParams, { replace: true });
+        } catch (error: any) {
+          console.error('Erro ao processar callback do Facebook:', error);
+          alert(`❌ Erro ao processar dados do Facebook\n\n${error.message}\n\nPor favor, verifique seu login e senha do Facebook e tente novamente.`);
+          
+          // Limpar parâmetros mesmo em caso de erro
+          const newParams = new URLSearchParams(searchParams);
+          newParams.delete('facebook_success');
+          newParams.delete('access_token');
+          newParams.delete('expires_in');
+          newParams.delete('pages');
+          newParams.delete('warning');
+          setSearchParams(newParams, { replace: true });
+        }
+      };
+
+      processFacebookCallback();
+    } else if (facebookError) {
+      alert('Erro ao autorizar Facebook: ' + decodeURIComponent(facebookError));
+      
+      // Limpar parâmetros de erro
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('facebook_error');
       setSearchParams(newParams, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2170,13 +2373,31 @@ export default function Integrations() {
             </div>
 
             {/* Modal Footer */}
-            <div className="flex items-center justify-end p-6 border-t border-gray-200">
+            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200">
               <button
-                onClick={() => setShowFacebookModal(false)}
+                onClick={() => {
+                  setShowFacebookModal(false);
+                  setFacebookTitle('');
+                  setPendingFacebookData(null);
+                }}
                 className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
               >
-                Fechar
+                Cancelar
               </button>
+              {pendingFacebookData && (
+                <button
+                  onClick={() => {
+                    if (facebookTitle.trim()) {
+                      handleFacebookConnect();
+                    } else {
+                      alert('Por favor, preencha o título da integração primeiro');
+                    }
+                  }}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Conectar
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2363,16 +2584,9 @@ export default function Integrations() {
               <div className="space-y-3 mb-4">
                 <button
                   onClick={() => {
-                    // Verificar se já está logado no Facebook
-                    const savedFacebookLogin = localStorage.getItem('facebookLoggedIn');
-                    if (savedFacebookLogin === 'true') {
-                      // Já está logado, conectar diretamente
-                      handleFacebookConnect();
-                    } else {
-                      // Não está logado, mostrar modal de login
-                      setShowFacebookPermissionsModal(false);
-                      setShowFacebookLoginModal(true);
-                    }
+                    // Iniciar autenticação OAuth do Facebook diretamente
+                    setShowFacebookPermissionsModal(false);
+                    handleFacebookLogin();
                   }}
                   className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
                 >

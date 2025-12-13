@@ -9,7 +9,7 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const connection_1 = require("../database/connection");
 const auth_1 = require("../middleware/auth");
 const router = express_1.default.Router();
-// Register
+// Register class
 router.post('/register', async (req, res) => {
     try {
         const { name, email, password, role = 'atendente' } = req.body;

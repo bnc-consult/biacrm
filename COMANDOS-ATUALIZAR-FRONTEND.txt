@@ -1,0 +1,74 @@
+========================================
+  ATUALIZAR FRONTEND EM PRODUÇÃO
+========================================
+
+PROBLEMA: Backend atualizado ✅, mas site ainda mostra versão antiga ❌
+SOLUÇÃO: Frontend precisa ser atualizado também!
+
+----------------------------------------
+PASSO 1: Descobrir onde está o frontend
+----------------------------------------
+
+Execute no servidor para descobrir onde o frontend está:
+
+ssh root@92.113.33.226
+
+# Copiar script de verificação
+scp verificar-frontend-completo.sh root@92.113.33.226:/tmp/
+ssh root@92.113.33.226 "chmod +x /tmp/verificar-frontend-completo.sh && bash /tmp/verificar-frontend-completo.sh"
+
+OU execute manualmente:
+
+ls -la /var/www/biacrm/
+find /var/www -name "index.html" -type f 2>/dev/null
+cat /etc/nginx/sites-enabled/default
+lsof -i :80
+lsof -i :443
+
+----------------------------------------
+PASSO 2: Build do frontend (JÁ FEITO)
+----------------------------------------
+
+✅ Build já foi feito em frontend/dist/
+
+----------------------------------------
+PASSO 3: Enviar frontend para o servidor
+----------------------------------------
+
+Após descobrir o caminho correto, execute:
+
+# Exemplo se estiver em /var/www/biacrm/dist/
+scp -r frontend/dist/* root@92.113.33.226:/var/www/biacrm/dist/
+# Senha: IAbots2025-@+
+
+# OU se estiver em /var/www/html/biacrm/
+scp -r frontend/dist/* root@92.113.33.226:/var/www/html/biacrm/
+
+# OU outro caminho que descobrir
+
+----------------------------------------
+PASSO 4: Limpar cache do navegador
+----------------------------------------
+
+Após atualizar, no navegador:
+- Pressione Ctrl+Shift+R (Windows/Linux)
+- Pressione Cmd+Shift+R (Mac)
+- OU abra em modo anônimo/privado
+
+========================================
+VERIFICAÇÃO
+========================================
+
+1. Verificar arquivos no servidor:
+   ssh root@92.113.33.226
+   ls -lrt /caminho/do/frontend/dist/
+   # Deve mostrar data/hora recente
+
+2. Testar no navegador:
+   - Acesse o site
+   - Ctrl+Shift+R para forçar reload
+   - Verifique se mudanças aparecem
+
+========================================
+
+

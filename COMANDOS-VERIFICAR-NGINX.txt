@@ -1,0 +1,50 @@
+========================================
+  VERIFICAR CONFIGURAÇÃO DO NGINX
+========================================
+
+Execute no servidor para descobrir onde o frontend está:
+
+ssh root@92.113.33.226
+
+# Ver configuração do biacrm.com
+cat /etc/nginx/sites-available/biacrm.com
+
+# Ver configuração do biacrm
+cat /etc/nginx/sites-available/biacrm
+
+# OU usar o script automático:
+bash /tmp/verificar-nginx-biacrm.sh
+
+========================================
+O QUE PROCURAR
+========================================
+
+Nos arquivos de configuração do Nginx, procure por:
+
+1. Linha "root" - indica onde os arquivos estáticos estão
+   Exemplo: root /var/www/biacrm/dist;
+
+2. Linha "location /" - indica como a raiz é servida
+   Exemplo: location / { root /var/www/biacrm/dist; }
+
+3. Linha "index" - indica qual arquivo é servido
+   Exemplo: index index.html;
+
+========================================
+APÓS DESCOBRIR O CAMINHO
+========================================
+
+1. Fazer build do frontend (já feito ✅)
+   cd frontend
+   npm run build
+
+2. Enviar arquivos para o caminho descoberto:
+   scp -r frontend/dist/* root@92.113.33.226:/CAMINHO/DESCOBERTO/
+   Senha: IAbots2025-@+
+
+3. Limpar cache do navegador:
+   Ctrl+Shift+R no navegador
+
+========================================
+
+

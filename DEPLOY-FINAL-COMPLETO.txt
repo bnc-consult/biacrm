@@ -1,0 +1,81 @@
+========================================
+  DEPLOY COMPLETO - PASSO A PASSO
+========================================
+
+✅ CONFIGURAÇÃO CONFIRMADA:
+- Servidor: root@92.113.33.226
+- Senha: IAbots2025-@+
+- Backend: /var/www/biacrm/api/
+- Gerenciador: PM2 (biacrm-backend)
+
+----------------------------------------
+PROCESSO COMPLETO DE DEPLOY
+----------------------------------------
+
+1. NO SEU COMPUTADOR - Build e Upload:
+
+   # Build
+   cd backend
+   npm run build
+   cd ..
+
+   # Upload (insira senha: IAbots2025-@+)
+   scp -r backend/dist/* root@92.113.33.226:/var/www/biacrm/api/dist/
+   scp backend/package.json root@92.113.33.226:/var/www/biacrm/api/
+   scp backend/package-lock.json root@92.113.33.226:/var/www/biacrm/api/
+
+2. NO SERVIDOR - Instalar e Reiniciar:
+
+   ssh root@92.113.33.226
+   cd /var/www/biacrm/api
+   npm install --production
+   pm2 restart biacrm-backend
+   pm2 list
+
+3. VERIFICAR:
+
+   curl http://localhost:3000/health
+   # Deve retornar: {"status":"ok","database":"connected"}
+
+----------------------------------------
+SCRIPT AUTOMATIZADO
+----------------------------------------
+
+Execute o script PowerShell:
+powershell -ExecutionPolicy Bypass -File .\deploy-completo-com-restart.ps1
+
+Ele fará tudo automaticamente, você só precisa inserir a senha quando solicitado.
+
+----------------------------------------
+COMANDOS RÁPIDOS (TUDO EM UM)
+----------------------------------------
+
+# No seu computador (raiz do projeto):
+cd backend && npm run build && cd .. && scp -r backend/dist/* root@92.113.33.226:/var/www/biacrm/api/dist/ && scp backend/package.json root@92.113.33.226:/var/www/biacrm/api/ && scp backend/package-lock.json root@92.113.33.226:/var/www/biacrm/api/
+
+# No servidor (via SSH):
+ssh root@92.113.33.226 "cd /var/www/biacrm/api && npm install --production && pm2 restart biacrm-backend && pm2 list && curl http://localhost:3000/health"
+
+========================================
+VERIFICAÇÃO PÓS-DEPLOY
+========================================
+
+1. Verificar arquivos atualizados:
+   ssh root@92.113.33.226
+   ls -lrt /var/www/biacrm/api/dist/
+   # Deve mostrar data/hora recente nos arquivos
+
+2. Verificar processo PM2:
+   pm2 list
+   # Deve mostrar biacrm-backend com uptime recente
+
+3. Testar API:
+   curl http://localhost:3000/health
+   # Deve retornar JSON com status ok
+
+4. Ver logs (se necessário):
+   pm2 logs biacrm-backend
+
+========================================
+
+

@@ -1,0 +1,52 @@
+========================================
+  LIMPAR AVISOS "conflicting server name"
+========================================
+
+Esses avisos aparecem quando há múltiplas configurações
+do mesmo domínio. Para limpar (OPCIONAL):
+
+----------------------------------------
+1. VERIFICAR CONFIGURAÇÕES:
+----------------------------------------
+
+ls -la /etc/nginx/sites-enabled/
+cat /etc/nginx/sites-enabled/biacrm
+
+# Verificar se há outras configurações com biacrm.com
+grep -r "server_name.*biacrm" /etc/nginx/sites-enabled/
+
+----------------------------------------
+2. VERIFICAR CONFIGURAÇÃO PRINCIPAL:
+----------------------------------------
+
+cat /etc/nginx/sites-available/biacrm
+
+# Verificar se há múltiplos blocos server com o mesmo server_name
+
+----------------------------------------
+3. CORRIGIR (se necessário):
+----------------------------------------
+
+# Editar a configuração
+nano /etc/nginx/sites-available/biacrm
+
+# Garantir que há apenas UM bloco server para cada porta:
+# - Um para HTTP (porta 80)
+# - Um para HTTPS (porta 443)
+
+# Testar configuração
+nginx -t
+
+# Recarregar
+systemctl reload nginx
+
+----------------------------------------
+NOTA:
+----------------------------------------
+
+Esses avisos NÃO afetam o funcionamento do site.
+Você pode ignorá-los se o site estiver funcionando.
+
+========================================
+
+

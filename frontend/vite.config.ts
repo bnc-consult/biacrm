@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    host: '0.0.0.0', // Escutar em todas as interfaces (IPv4 e IPv6)
     proxy: {
       '/api': {
         target: 'http://localhost:3000',

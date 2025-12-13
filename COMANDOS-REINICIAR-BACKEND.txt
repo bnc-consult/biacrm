@@ -1,0 +1,83 @@
+========================================
+  COMANDOS PARA REINICIAR O BACKEND
+========================================
+
+Baseado nos processos encontrados, você tem processos Node.js rodando.
+Execute estes comandos NO SERVIDOR:
+
+----------------------------------------
+OPÇÃO 1: Verificar se usa PM2
+----------------------------------------
+ssh root@92.113.33.226
+pm2 list
+
+Se aparecer processos, use:
+pm2 restart all
+# OU
+pm2 restart biacrm-api
+
+----------------------------------------
+OPÇÃO 2: Verificar se usa systemd
+----------------------------------------
+ssh root@92.113.33.226
+systemctl list-units --type=service | grep -i "biacrm\|node"
+
+Se encontrar um serviço, use:
+systemctl restart <nome-do-servico>
+
+----------------------------------------
+OPÇÃO 3: Reiniciar manualmente
+----------------------------------------
+ssh root@92.113.33.226
+cd /var/www/biacrm/api
+
+# Parar processos
+pkill -f "node.*dist/index.js"
+pkill -f "node.*dist/main"
+
+# Aguardar
+sleep 2
+
+# Instalar dependências (se necessário)
+npm install --production
+
+# Iniciar novamente
+nohup node dist/index.js > app.log 2>&1 &
+
+# Verificar se iniciou
+ps aux | grep "node.*dist/index.js" | grep -v grep
+
+# Testar
+curl http://localhost:3000/health
+
+----------------------------------------
+OPÇÃO 4: Usar o script automático
+----------------------------------------
+# Copiar o script para o servidor
+scp reiniciar-backend-servidor.sh root@92.113.33.226:/tmp/
+
+# No servidor:
+ssh root@92.113.33.226
+chmod +x /tmp/reiniciar-backend-servidor.sh
+bash /tmp/reiniciar-backend-servidor.sh
+
+========================================
+VERIFICAR SE ATUALIZOU
+========================================
+
+Após reiniciar, verifique:
+
+1. Verificar data dos arquivos:
+   ls -lrt /var/www/biacrm/api/dist/
+
+2. Testar API:
+   curl http://localhost:3000/health
+
+3. Verificar logs:
+   tail -f /var/www/biacrm/api/app.log
+   # OU se usar PM2:
+   pm2 logs
+
+========================================
+
+

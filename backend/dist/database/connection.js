@@ -8,15 +8,15 @@ const pg_1 = require("pg");
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
-const DATABASE_URL = process.env.DATABASE_URL || '';
+const DATABASE_URL = process.env.DATABASE_URL || 'sqlite:./database.sqlite';
 // Check if using SQLite
 let db = null;
 exports.db = db;
 let pool = null;
 exports.pool = pool;
-if (DATABASE_URL.startsWith('sqlite:')) {
+if (DATABASE_URL.startsWith('sqlite:') || !DATABASE_URL || DATABASE_URL === '') {
     // Use SQLite
-    const dbPath = DATABASE_URL.replace('sqlite:', '');
+    const dbPath = DATABASE_URL && DATABASE_URL !== '' ? DATABASE_URL.replace('sqlite:', '') : './database.sqlite';
     try {
         exports.db = db = new better_sqlite3_1.default(dbPath);
         db.pragma('journal_mode = WAL');

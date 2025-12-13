@@ -1,0 +1,106 @@
+========================================
+  SOLUÇÃO COMPLETA: PROBLEMA DE DNS
+========================================
+
+PROBLEMA CONFIRMADO:
+O domínio biacrm.com não está resolvendo no DNS.
+Erro: DNS_PROBE_FINISHED_NXDOMAIN
+
+----------------------------------------
+SOLUÇÃO 1: CONFIGURAR DNS NO PROVEDOR
+----------------------------------------
+
+Você precisa configurar o DNS no seu provedor de domínio
+(onde você comprou o domínio biacrm.com).
+
+CONFIGURAÇÕES NECESSÁRIAS:
+
+Tipo: A
+Nome: @ (ou deixar em branco)
+Valor: 92.113.33.226
+TTL: 3600 (ou padrão)
+
+Tipo: A
+Nome: www
+Valor: 92.113.33.226
+TTL: 3600 (ou padrão)
+
+Após configurar, aguarde a propagação DNS (pode levar até 48h).
+Verifique em: https://www.whatsmydns.net/#A/biacrm.com
+
+----------------------------------------
+SOLUÇÃO 2: ACESSO TEMPORÁRIO VIA HOSTS
+----------------------------------------
+
+Enquanto o DNS não está configurado, você pode adicionar
+uma entrada no arquivo hosts do Windows:
+
+1. Abra o Bloco de Notas como Administrador:
+   - Clique com botão direito no Bloco de Notas
+   - Escolha "Executar como administrador"
+
+2. Abra o arquivo:
+   C:\Windows\System32\drivers\etc\hosts
+
+3. Adicione estas linhas no final:
+   92.113.33.226    biacrm.com
+   92.113.33.226    www.biacrm.com
+
+4. Salve o arquivo (Ctrl+S)
+
+5. Feche e reabra o navegador
+
+6. Acesse: https://biacrm.com
+
+NOTA: Isso só funciona no seu computador.
+Outros usuários precisarão que o DNS esteja configurado.
+
+----------------------------------------
+SOLUÇÃO 3: ACESSAR DIRETAMENTE PELO IP
+----------------------------------------
+
+Você pode tentar acessar diretamente:
+http://92.113.33.226
+
+MAS: Isso pode não funcionar se o Nginx está configurado
+para responder apenas ao domínio biacrm.com.
+
+Se não funcionar, você precisa verificar a configuração
+do Nginx para aceitar requisições sem o header Host.
+
+----------------------------------------
+VERIFICAR CONFIGURAÇÃO DO SERVIDOR:
+----------------------------------------
+
+Execute no servidor:
+
+ssh root@92.113.33.226
+
+# Verificar configuração do Nginx
+cat /etc/nginx/sites-available/biacrm
+
+# Verificar se há server_name configurado
+grep -E "server_name|listen" /etc/nginx/sites-available/biacrm
+
+# Se necessário, adicionar um server block padrão que aceita qualquer host
+# OU modificar para aceitar requisições pelo IP também
+
+========================================
+RESUMO:
+========================================
+
+1. ✅ Servidor está funcionando (92.113.33.226)
+2. ✅ Nginx está rodando
+3. ✅ Backend está rodando
+4. ✅ Permissões corrigidas
+5. ❌ DNS não está configurado
+
+PRÓXIMO PASSO:
+Configure o DNS no seu provedor de domínio para apontar
+biacrm.com para 92.113.33.226
+
+OU use a solução temporária do arquivo hosts.
+
+========================================
+
+

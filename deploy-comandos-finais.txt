@@ -1,0 +1,25 @@
+========================================
+  COMANDOS FINAIS PARA DEPLOY
+========================================
+
+Os diretórios já existem no servidor. Use estes comandos:
+
+----------------------------------------
+BACKEND
+----------------------------------------
+scp -r backend/dist/* root@92.113.33.226:/var/www/biacrm/backend/dist/
+scp backend/package.json root@92.113.33.226:/var/www/biacrm/backend/
+scp backend/package-lock.json root@92.113.33.226:/var/www/biacrm/backend/
+
+----------------------------------------
+FRONTEND
+----------------------------------------
+scp -r frontend/dist/* root@92.113.33.226:/var/www/biacrm/frontend/dist/
+
+========================================
+NOTA: Certifique-se de que há uma barra 
+final "/" no caminho de destino para 
+evitar erros.
+========================================
+
+

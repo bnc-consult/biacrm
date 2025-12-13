@@ -1,0 +1,57 @@
+========================================
+  COMANDOS PARA DESCOBRIR O FRONTEND
+========================================
+
+Execute estes comandos no servidor:
+
+----------------------------------------
+1. Ver o que tem em /var/www/biacrm
+----------------------------------------
+ls -la /var/www/biacrm/
+
+----------------------------------------
+2. Ver todos os arquivos de configuração do Nginx
+----------------------------------------
+ls -la /etc/nginx/sites-enabled/
+cat /etc/nginx/sites-enabled/*
+
+----------------------------------------
+3. Verificar se há processos Node.js servindo algo
+----------------------------------------
+ps aux | grep node
+ps aux | grep serve
+ps aux | grep vite
+
+----------------------------------------
+4. Procurar index.html em todo o sistema (pode demorar)
+----------------------------------------
+find /var/www -name "index.html" -type f 2>/dev/null
+
+----------------------------------------
+5. Verificar configuração do Nginx principal
+----------------------------------------
+cat /etc/nginx/nginx.conf
+grep -r "biacrm" /etc/nginx/ 2>/dev/null
+
+----------------------------------------
+6. Verificar se o frontend está na raiz do domínio
+----------------------------------------
+ls -la /var/www/html/
+ls -la /var/www/
+
+========================================
+POSSÍVEIS CENÁRIOS:
+========================================
+
+1. Frontend pode estar sendo servido pelo próprio backend
+   (Express servindo arquivos estáticos)
+
+2. Frontend pode estar em outro servidor/domínio
+
+3. Frontend pode estar em /var/www/html/ ou /var/www/
+
+4. Frontend pode estar sendo servido via CDN ou outro serviço
+
+========================================
+
+

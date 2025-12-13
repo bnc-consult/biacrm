@@ -1,0 +1,49 @@
+========================================
+  COMANDOS PARA DEPLOY MANUAL
+========================================
+
+Execute estes comandos UM POR VEZ na raiz do projeto.
+Insira a senha quando solicitado: IAbots2025-@+
+
+----------------------------------------
+COMANDO 1: Enviar arquivos compilados
+----------------------------------------
+scp -r backend/dist/* root@92.113.33.226:/var/www/biacrm/api/dist/
+Senha: IAbots2025-@+
+
+----------------------------------------
+COMANDO 2: Enviar package.json
+----------------------------------------
+scp backend/package.json root@92.113.33.226:/var/www/biacrm/api/
+Senha: IAbots2025-@+
+
+----------------------------------------
+COMANDO 3: Enviar package-lock.json
+----------------------------------------
+scp backend/package-lock.json root@92.113.33.226:/var/www/biacrm/api/
+Senha: IAbots2025-@+
+
+========================================
+VERIFICAR SE FUNCIONOU
+========================================
+
+Após executar os 3 comandos acima, verifique no servidor:
+
+ssh root@92.113.33.226
+cd /var/www/biacrm/api/dist
+ls -la
+
+Você deve ver os arquivos atualizados (index.js, routes/, middleware/, etc.)
+
+========================================
+APÓS O UPLOAD - Comandos no servidor
+========================================
+
+ssh root@92.113.33.226
+cd /var/www/biacrm/api
+npm install --production
+npm start
+
+========================================
+
+

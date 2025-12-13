@@ -1,0 +1,67 @@
+========================================
+  DEPLOY MANUAL COM SENHA
+========================================
+
+Senha do servidor: IAbots2025-@+
+Servidor: root@92.113.33.226
+
+----------------------------------------
+OPÇÃO 1: Usar sshpass (Linux/WSL)
+----------------------------------------
+
+# Instalar sshpass (se não tiver)
+sudo apt-get install sshpass
+
+# Executar comandos
+export SSHPASS="IAbots2025-@+"
+
+# Enviar backend
+sshpass -e scp -r backend/dist/* root@92.113.33.226:/var/www/biacrm/api/dist/
+sshpass -e scp backend/package.json root@92.113.33.226:/var/www/biacrm/api/
+sshpass -e scp backend/package-lock.json root@92.113.33.226:/var/www/biacrm/api/
+
+----------------------------------------
+OPÇÃO 2: PowerShell (inserir senha manualmente)
+----------------------------------------
+
+Execute estes comandos e insira a senha quando solicitado:
+
+scp -r backend/dist/* root@92.113.33.226:/var/www/biacrm/api/dist/
+# Senha: IAbots2025-@+
+
+scp backend/package.json root@92.113.33.226:/var/www/biacrm/api/
+# Senha: IAbots2025-@+
+
+scp backend/package-lock.json root@92.113.33.226:/var/www/biacrm/api/
+# Senha: IAbots2025-@+
+
+----------------------------------------
+OPÇÃO 3: Usar expect (Linux)
+----------------------------------------
+
+Crie um arquivo deploy-expect.sh:
+
+#!/usr/bin/expect
+set password "IAbots2025-@+"
+set server "root@92.113.33.226"
+
+spawn scp -r backend/dist/* ${server}:/var/www/biacrm/api/dist/
+expect "password:"
+send "$password\r"
+expect eof
+
+spawn scp backend/package.json ${server}:/var/www/biacrm/api/
+expect "password:"
+send "$password\r"
+expect eof
+
+spawn scp backend/package-lock.json ${server}:/var/www/biacrm/api/
+expect "password:"
+send "$password\r"
+expect eof
+
+Execute: chmod +x deploy-expect.sh && ./deploy-expect.sh
+
+========================================
+
+

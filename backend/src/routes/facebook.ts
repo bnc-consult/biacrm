@@ -7,10 +7,41 @@ import axios from 'axios';
 const router = express.Router();
 
 // Facebook OAuth Configuration
+// APP_ID e SECRET fixos no código - configurados pelo desenvolvedor/admin
+// O usuário final não precisa conhecer ou configurar essas credenciais
 const FACEBOOK_APP_ID = process.env.FACEBOOK_APP_ID || '';
 const FACEBOOK_APP_SECRET = process.env.FACEBOOK_APP_SECRET || '';
-const FACEBOOK_REDIRECT_URI = process.env.FACEBOOK_REDIRECT_URI || 'https://biacrm.com/api/integrations/facebook/callback';
 const FACEBOOK_API_BASE = 'https://graph.facebook.com/v18.0';
+
+// Validar se as credenciais estão configuradas antes de usar
+const validateFacebookConfig = () => {
+  if (!FACEBOOK_APP_ID || FACEBOOK_APP_ID.trim() === '') {
+    throw new Error('Facebook App ID não está configurado. Entre em contato com o administrador do sistema para configurar a integração com Facebook.');
+  }
+  if (!FACEBOOK_APP_SECRET || FACEBOOK_APP_SECRET.trim() === '') {
+    throw new Error('Facebook App Secret não está configurado. Entre em contato com o administrador do sistema para configurar a integração com Facebook.');
+  }
+};
+
+// Função para obter o URI de redirecionamento baseado na requisição
+const getRedirectUri = (req: express.Request): string => {
+  // Se estiver definido no .env, usa ele
+  if (process.env.FACEBOOK_REDIRECT_URI) {
+    return process.env.FACEBOOK_REDIRECT_URI;
+  }
+  
+  // Detecta automaticamente baseado na requisição
+  const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'http';
+  const host = req.get('host') || req.headers.host || 'localhost:3000';
+  
+  // Se for localhost, usa http
+  if (host.includes('localhost') || host.includes('127.0.0.1')) {
+    return `http://${host}/api/integrations/facebook/callback`;
+  }
+  
+  // Caso contrário, assume produção com https
+  return `https://${host}/api/integrations/facebook/callback`;
+};
 
 // Create or update Facebook integration
 router.post('/connect', authenticate, async (req: AuthRequest, res) => {
@@ -22,14 +53,84 @@ router.post('/connect', authenticate, async (req: AuthRequest, res) => {
       return res.status(400).json({ message: 'Título é obrigatório' });
     }
 
-    if (!access_token || !page_id) {
-      return res.status(400).json({ message: 'Access token e Page ID são obrigatórios' });
+    if (!access_token) {
+      return res.status(400).json({ message: 'Access token é obrigatório' });
+    }
+
+    // Se não houver page_id, usar o ID do usuário do Facebook como fallback
+    let finalPageId = page_id;
+    let finalPageName = page_name;
+
+    // Validar o token com a API do Facebook antes de salvar
+    try {
+      const tokenValidation = await axios.get(
+        `${FACEBOOK_API_BASE}/me`,
+        {
+          params: {
+            access_token: access_token,
+            fields: 'id,name'
+          }
+        }
+      );
+
+      const userData = tokenValidation.data;
+      
+      // Se não houver page_id fornecido, usar o ID do usuário
+      if (!finalPageId || finalPageId === 'user_account') {
+        finalPageId = `user_${userData.id}`;
+        finalPageName = finalPageName || userData.name || 'Conta Pessoal';
+      } else {
+        // Verificar se a página pertence ao usuário (se page_id foi fornecido)
+        try {
+          const pagesResponse = await axios.get(
+            `${FACEBOOK_API_BASE}/me/accounts`,
+            {
+              params: {
+                access_token: access_token,
+                fields: 'id,name,access_token'
+              }
+            }
+          );
+
+          const pages = pagesResponse.data.data || [];
+          const pageExists = pages.some((p: any) => p.id === page_id);
+
+          if (!pageExists && page_id !== `user_${userData.id}`) {
+            // Se a página não existe, usar o ID do usuário como fallback
+            console.warn(`Página ${page_id} não encontrada, usando conta do usuário`);
+            finalPageId = `user_${userData.id}`;
+            finalPageName = userData.name || 'Conta Pessoal';
+          }
+        } catch (pagesError: any) {
+          // Se não conseguir buscar páginas, usar conta do usuário
+          console.warn('Não foi possível buscar páginas, usando conta do usuário:', pagesError.message);
+          finalPageId = `user_${userData.id}`;
+          finalPageName = userData.name || 'Conta Pessoal';
+        }
+      }
+    } catch (validationError: any) {
+      console.error('Facebook token validation error:', validationError.response?.data || validationError.message);
+      
+      // Se o erro for de autenticação, retornar erro específico
+      if (validationError.response?.data?.error) {
+        const fbError = validationError.response.data.error;
+        return res.status(401).json({ 
+          message: `Token do Facebook inválido: ${fbError.message || 'Credenciais inválidas'}. Por favor, autorize novamente.`,
+          error: 'INVALID_TOKEN',
+          facebookError: fbError
+        });
+      }
+
+      return res.status(401).json({ 
+        message: 'Não foi possível validar o token do Facebook. Por favor, autorize novamente.',
+        error: 'TOKEN_VALIDATION_FAILED'
+      });
     }
 
     // Check if integration already exists for this user and page
     const existing = await query(
       'SELECT id FROM facebook_integrations WHERE user_id = ? AND page_id = ?',
-      [userId, page_id]
+      [userId, finalPageId]
     );
 
     let integrationId: number;
@@ -39,12 +140,13 @@ router.post('/connect', authenticate, async (req: AuthRequest, res) => {
       integrationId = existing.rows[0].id;
       await query(
         `UPDATE facebook_integrations 
-         SET title = ?, access_token = ?, page_name = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
+         SET title = ?, access_token = ?, page_id = ?, page_name = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         [
           title,
           access_token,
-          page_name || null,
+          finalPageId,
+          finalPageName || null,
           expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null,
           integrationId
         ]
@@ -59,8 +161,8 @@ router.post('/connect', authenticate, async (req: AuthRequest, res) => {
           userId,
           title,
           access_token,
-          page_id,
-          page_name || null,
+          finalPageId,
+          finalPageName || null,
           expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null
         ]
       );
@@ -87,24 +189,29 @@ router.post('/connect', authenticate, async (req: AuthRequest, res) => {
 // Get Facebook OAuth URL
 router.get('/oauth/url', authenticate, async (req: AuthRequest, res) => {
   try {
+    // Validar configuração antes de continuar
+    validateFacebookConfig();
+
     const state = crypto.randomBytes(32).toString('hex');
     const userId = (req.user && req.user.id);
 
     // Store state in session/database for verification
     const stateWithUserId = `${state}_${userId}`;
 
+    // Obter URI de redirecionamento dinamicamente
+    const redirectUri = getRedirectUri(req);
+
+    // Usar apenas permissões válidas do Facebook
+    // Permissões básicas que funcionam sem revisão do Facebook
+    // Nota: 'email' pode não estar disponível dependendo da configuração do app
     const scopes = [
-      'pages_show_list',
-      'pages_read_engagement',
-      'pages_manage_metadata',
-      'leads_retrieval',
-      'pages_read_user_content',
-      'pages_manage_ads'
+      'public_profile',      // Perfil público do usuário (sempre válida)
+      'pages_show_list'       // Listar páginas do Facebook (válida e necessária)
     ].join(',');
 
     const authUrl = `https://www.facebook.com/v18.0/dialog/oauth?` +
       `client_id=${FACEBOOK_APP_ID}&` +
-      `redirect_uri=${encodeURIComponent(FACEBOOK_REDIRECT_URI)}&` +
+      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
       `scope=${scopes}&` +
       `state=${stateWithUserId}&` +
       `response_type=code`;
@@ -116,60 +223,218 @@ router.get('/oauth/url', authenticate, async (req: AuthRequest, res) => {
     });
   } catch (error: any) {
     console.error('Facebook OAuth URL error:', error);
-    res.status(500).json({ message: error.message || 'Erro ao gerar URL de autorização' });
+    res.status(500).json({ 
+      message: error.message || 'Erro ao gerar URL de autorização',
+      error: 'FACEBOOK_CONFIG_ERROR'
+    });
   }
 });
 
 // Facebook OAuth Callback
 router.get('/callback', async (req, res) => {
   try {
-    const { code, state } = req.query;
+    // Validar configuração antes de continuar
+    validateFacebookConfig();
+
+    const { code, state, error, error_reason, error_description } = req.query;
+
+    // Verificar se o Facebook retornou um erro (ex: usuário cancelou ou senha incorreta)
+    if (error || error_reason) {
+      console.error('Facebook OAuth error:', { error, error_reason, error_description });
+      
+      let frontendUrl = process.env.FRONTEND_URL;
+      if (!frontendUrl) {
+        const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'http';
+        const host = req.get('host') || req.headers.host || 'localhost:3000';
+        
+        if (host.includes('localhost') || host.includes('127.0.0.1')) {
+          frontendUrl = 'http://localhost:5173';
+        } else {
+          frontendUrl = `https://biacrm.com`;
+        }
+      }
+
+      let errorMessage = 'Autenticação falhou. ';
+      
+      if (error_reason === 'user_denied' || error === 'access_denied') {
+        errorMessage += 'Você cancelou a autorização. Por favor, tente novamente e autorize o acesso.';
+      } else if (error_description && error_description.toLowerCase().includes('password')) {
+        errorMessage += 'Login ou senha incorretos. Por favor, verifique suas credenciais e tente novamente.';
+      } else {
+        errorMessage += 'Por favor, verifique seu login e senha do Facebook e tente novamente.';
+      }
+
+      return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent(errorMessage)}`);
+    }
 
     if (!code) {
-      return res.status(400).json({ message: 'Código de autorização não fornecido' });
+      let frontendUrl = process.env.FRONTEND_URL;
+      if (!frontendUrl) {
+        const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'http';
+        const host = req.get('host') || req.headers.host || 'localhost:3000';
+        
+        if (host.includes('localhost') || host.includes('127.0.0.1')) {
+          frontendUrl = 'http://localhost:5173';
+        } else {
+          frontendUrl = `https://biacrm.com`;
+        }
+      }
+      
+      return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent('Código de autorização não fornecido. Por favor, verifique seu login e senha do Facebook e tente novamente.')}`);
     }
 
     // Extract userId from state
     const stateParts = (state as string) && (state as string).split('_');
     const userId = (stateParts && stateParts[stateParts.length - 1]);
 
-    // Exchange code for access token
-    const tokenResponse = await axios.get(
-      `${FACEBOOK_API_BASE}/oauth/access_token`,
-      {
-        params: {
-          client_id: FACEBOOK_APP_ID,
-          client_secret: FACEBOOK_APP_SECRET,
-          redirect_uri: FACEBOOK_REDIRECT_URI,
-          code: code as string
-        }
+    // Obter URI de redirecionamento dinamicamente (deve ser o mesmo usado na URL de autorização)
+    const redirectUri = getRedirectUri(req);
+
+    // Detectar URL do frontend automaticamente
+    let frontendUrl = process.env.FRONTEND_URL;
+    if (!frontendUrl) {
+      const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'http';
+      const host = req.get('host') || req.headers.host || 'localhost:3000';
+      
+      if (host.includes('localhost') || host.includes('127.0.0.1')) {
+        frontendUrl = 'http://localhost:5173';
+      } else {
+        frontendUrl = `https://biacrm.com`;
       }
-    );
+    }
+
+    // Exchange code for access token
+    let tokenResponse;
+    try {
+      tokenResponse = await axios.get(
+        `${FACEBOOK_API_BASE}/oauth/access_token`,
+        {
+          params: {
+            client_id: FACEBOOK_APP_ID,
+            client_secret: FACEBOOK_APP_SECRET,
+            redirect_uri: redirectUri,
+            code: code as string
+          }
+        }
+      );
+    } catch (tokenError: any) {
+      console.error('Facebook token exchange error:', tokenError.response?.data || tokenError.message);
+      
+      const fbError = tokenError.response?.data?.error;
+      let errorMessage = 'Autenticação falhou. ';
+      
+      // Verificar tipos específicos de erro do Facebook
+      if (fbError) {
+        const errorCode = fbError.code;
+        const errorType = fbError.type;
+        const fbErrorMessage = fbError.message || '';
+        
+        // Erros relacionados a credenciais inválidas
+        if (errorCode === 100 || errorCode === 190 || 
+            fbErrorMessage.toLowerCase().includes('invalid') ||
+            fbErrorMessage.toLowerCase().includes('expired') ||
+            fbErrorMessage.toLowerCase().includes('password') ||
+            fbErrorMessage.toLowerCase().includes('login')) {
+          errorMessage += 'Login ou senha incorretos. Por favor, verifique suas credenciais do Facebook e tente novamente.';
+        } else if (errorType === 'OAuthException') {
+          errorMessage += 'Erro na autorização. Por favor, verifique seu login e senha do Facebook e tente novamente.';
+        } else {
+          errorMessage += fbErrorMessage || 'Por favor, verifique seu login e senha do Facebook e tente novamente.';
+        }
+      } else {
+        errorMessage += 'Não foi possível autenticar. Por favor, verifique seu login e senha do Facebook e tente novamente.';
+      }
+      
+      return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent(errorMessage)}`);
+    }
 
     const { access_token, expires_in } = tokenResponse.data;
 
-    // Get user's pages
-    const pagesResponse = await axios.get(
-      `${FACEBOOK_API_BASE}/me/accounts`,
-      {
-        params: {
-          access_token: access_token,
-          fields: 'id,name,access_token'
+    // Validar se o token foi recebido
+    if (!access_token) {
+      return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent('Token de acesso não recebido do Facebook. Por favor, verifique seu login e senha e tente novamente.')}`);
+    }
+
+    // Get user's pages - validar token ao mesmo tempo
+    let pagesResponse;
+    try {
+      pagesResponse = await axios.get(
+        `${FACEBOOK_API_BASE}/me/accounts`,
+        {
+          params: {
+            access_token: access_token,
+            fields: 'id,name,access_token'
+          }
         }
+      );
+    } catch (pagesError: any) {
+      console.error('Facebook pages fetch error:', pagesError.response?.data || pagesError.message);
+      
+      const fbError = pagesError.response?.data?.error;
+      let errorMessage = 'Erro ao validar acesso. ';
+      
+      // Verificar se é erro de autenticação
+      if (fbError) {
+        const errorCode = fbError.code;
+        const fbErrorMessage = fbError.message || '';
+        
+        if (errorCode === 190 || errorCode === 102 || 
+            fbErrorMessage.toLowerCase().includes('invalid') ||
+            fbErrorMessage.toLowerCase().includes('expired') ||
+            fbErrorMessage.toLowerCase().includes('token')) {
+          errorMessage += 'Token inválido ou expirado. Por favor, verifique seu login e senha do Facebook e tente novamente.';
+        } else {
+          errorMessage += fbErrorMessage || 'Por favor, verifique seu login e senha do Facebook e tente novamente.';
+        }
+      } else {
+        errorMessage += 'Não foi possível validar o acesso. Por favor, verifique seu login e senha do Facebook e tente novamente.';
       }
-    );
+      
+      return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent(errorMessage)}`);
+    }
 
     const pages = pagesResponse.data.data || [];
-
-    // Redirect to frontend with tokens and pages
-    const frontendUrl = process.env.FRONTEND_URL || 'https://biacrm.com';
+    
+    // Log para debug
+    console.log('Facebook pages response:', {
+      hasData: !!pagesResponse.data.data,
+      pagesCount: pages?.length || 0,
+      pages: pages?.map((p: any) => ({ id: p.id, name: p.name })) || []
+    });
+    
+    // Se não houver páginas, ainda permitir continuar mas avisar o usuário
+    // O usuário pode criar uma integração mesmo sem páginas (para uso futuro)
+    if (!pages || pages.length === 0) {
+      console.warn('Nenhuma página do Facebook encontrada para o usuário');
+      
+      // Redirecionar com sucesso mas sem páginas - o frontend vai tratar isso
+      const redirectUrl = `${frontendUrl}/entrada-saida?facebook_success=true&access_token=${access_token}&expires_in=${expires_in}&pages=${encodeURIComponent(JSON.stringify([]))}&warning=${encodeURIComponent('Nenhuma página do Facebook encontrada. Você pode criar a integração mesmo assim.')}`;
+      
+      return res.redirect(redirectUrl);
+    }
+    
+    // Redirecionar para o frontend com os dados válidos
     const redirectUrl = `${frontendUrl}/entrada-saida?facebook_success=true&access_token=${access_token}&expires_in=${expires_in}&pages=${encodeURIComponent(JSON.stringify(pages))}`;
 
     res.redirect(redirectUrl);
   } catch (error: any) {
     console.error('Facebook callback error:', error);
-    const frontendUrl = process.env.FRONTEND_URL || 'https://biacrm.com';
-    res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent(error.message || 'Erro ao autorizar')}`);
+    
+    // Detectar URL do frontend automaticamente
+    let frontendUrl = process.env.FRONTEND_URL;
+    if (!frontendUrl) {
+      const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'http';
+      const host = req.get('host') || req.headers.host || 'localhost:3000';
+      
+      if (host.includes('localhost') || host.includes('127.0.0.1')) {
+        frontendUrl = 'http://localhost:5173';
+      } else {
+        frontendUrl = `https://biacrm.com`;
+      }
+    }
+    
+    const errorMessage = error.message || 'Erro ao processar autorização do Facebook. Por favor, verifique seu login e senha e tente novamente.';
+    return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent(errorMessage)}`);
   }
 });
 

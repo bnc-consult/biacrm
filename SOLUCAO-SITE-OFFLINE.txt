@@ -1,0 +1,71 @@
+========================================
+  SOLUÇÃO: SITE OFFLINE
+========================================
+
+O site biacrm.com não está acessível.
+Execute estes comandos NO SERVIDOR para diagnosticar:
+
+----------------------------------------
+DIAGNÓSTICO RÁPIDO
+----------------------------------------
+
+ssh root@92.113.33.226
+
+# 1. Verificar se Nginx está rodando
+systemctl status nginx
+
+# 2. Verificar se backend está rodando
+pm2 list
+
+# 3. Testar backend localmente
+curl http://localhost:3000/health
+
+# 4. Verificar configuração do Nginx
+nginx -t
+
+# 5. Ver logs de erro
+tail -20 /var/log/nginx/error.log
+
+----------------------------------------
+SOLUÇÕES COMUNS
+----------------------------------------
+
+1. SE NGINX NÃO ESTÁ RODANDO:
+   systemctl start nginx
+   systemctl enable nginx
+
+2. SE BACKEND NÃO ESTÁ RODANDO:
+   cd /var/www/biacrm/api
+   pm2 restart biacrm-backend
+   # OU
+   pm2 start dist/index.js --name biacrm-backend
+
+3. SE HÁ ERRO NA CONFIGURAÇÃO DO NGINX:
+   nginx -t
+   # Corrigir erros encontrados
+   systemctl reload nginx
+
+4. SE PORTAS ESTÃO BLOQUEADAS:
+   # Verificar firewall
+   ufw status
+   # Permitir portas se necessário
+   ufw allow 80
+   ufw allow 443
+
+5. SE CERTIFICADO SSL ESTÁ INVÁLIDO:
+   # Renovar certificado
+   certbot renew
+   systemctl reload nginx
+
+----------------------------------------
+VERIFICAÇÃO COMPLETA
+----------------------------------------
+
+Execute o script de diagnóstico:
+bash /tmp/diagnosticar-site-offline.sh
+
+OU execute manualmente os comandos acima.
+
+========================================
+
+

@@ -1,0 +1,98 @@
+========================================
+  ATUALIZAR FRONTEND EM PRODUÇÃO
+========================================
+
+O backend foi atualizado com sucesso! ✅
+Agora precisamos atualizar o frontend.
+
+----------------------------------------
+PASSO 1: Descobrir onde está o frontend
+----------------------------------------
+
+Execute no servidor:
+
+ssh root@92.113.33.226
+bash descobrir-e-atualizar-frontend.sh
+
+OU execute manualmente:
+
+# Ver estrutura
+ls -la /var/www/biacrm/
+
+# Procurar index.html
+find /var/www -name "index.html" -type f 2>/dev/null
+
+# Ver configuração do Nginx
+cat /etc/nginx/sites-enabled/default
+ls -la /etc/nginx/sites-enabled/
+
+# Ver processos nas portas 80/443
+lsof -i :80
+lsof -i :443
+
+----------------------------------------
+PASSO 2: Fazer build do frontend
+----------------------------------------
+
+No seu computador local:
+
+cd frontend
+npm run build
+cd ..
+
+Isso criará os arquivos em frontend/dist/
+
+----------------------------------------
+PASSO 3: Enviar frontend para o servidor
+----------------------------------------
+
+Após descobrir onde o frontend está, envie os arquivos:
+
+# Se o frontend estiver em /var/www/biacrm/dist/
+scp -r frontend/dist/* root@92.113.33.226:/var/www/biacrm/dist/
+
+# Se o frontend estiver em /var/www/html/biacrm/
+scp -r frontend/dist/* root@92.113.33.226:/var/www/html/biacrm/
+
+# Se o frontend estiver em outro caminho, ajuste conforme necessário
+
+----------------------------------------
+PASSO 4: Limpar cache
+----------------------------------------
+
+Após atualizar, limpe o cache do navegador:
+- Pressione Ctrl+Shift+R (Windows/Linux)
+- Pressione Cmd+Shift+R (Mac)
+- OU abra em modo anônimo/privado
+
+----------------------------------------
+VERIFICAÇÃO
+----------------------------------------
+
+1. Verificar arquivos atualizados no servidor:
+   ls -lrt /caminho/do/frontend/dist/
+
+2. Testar no navegador:
+   - Acesse o site
+   - Pressione Ctrl+Shift+R para forçar reload
+   - Verifique se as mudanças aparecem
+
+========================================
+POSSÍVEIS PROBLEMAS
+========================================
+
+1. Cache do navegador:
+   - Limpe o cache (Ctrl+Shift+R)
+   - Teste em modo anônimo
+
+2. Frontend em outro servidor:
+   - Verifique o domínio do site
+   - Pode estar em outro IP/servidor
+
+3. CDN ou proxy:
+   - Se usar CDN, precisa invalidar cache
+   - Se usar proxy, pode ter cache também
+
+========================================
+
+

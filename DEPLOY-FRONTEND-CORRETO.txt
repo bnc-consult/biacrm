@@ -1,0 +1,39 @@
+========================================
+  DEPLOY DO FRONTEND - CAMINHO CORRETO
+========================================
+
+✅ CAMINHO DESCOBERTO:
+- Frontend: /domains/biacrm.com/public_html/
+
+----------------------------------------
+COMANDOS PARA ATUALIZAR O FRONTEND
+----------------------------------------
+
+1. NO SEU COMPUTADOR - Build (já feito ✅):
+   cd frontend
+   npm run build
+   cd ..
+
+2. ENVIAR ARQUIVOS PARA O SERVIDOR:
+   scp -r frontend/dist/* root@92.113.33.226:/domains/biacrm.com/public_html/
+   Senha: IAbots2025-@+
+
+3. LIMPAR CACHE DO NAVEGADOR:
+   - Pressione Ctrl+Shift+R (Windows/Linux)
+   - Pressione Cmd+Shift+R (Mac)
+   - OU teste em modo anônimo/privado
+
+----------------------------------------
+VERIFICAÇÃO NO SERVIDOR
+----------------------------------------
+
+ssh root@92.113.33.226
+ls -lrt /domains/biacrm.com/public_html/
+# Deve mostrar arquivos com data/hora recente
+
+# Verificar se index.html foi atualizado
+cat /domains/biacrm.com/public_html/index.html | head -20
+
+========================================
+
+

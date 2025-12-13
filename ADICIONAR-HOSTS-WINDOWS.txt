@@ -1,0 +1,71 @@
+========================================
+  ADICIONAR ENTRADA NO HOSTS (WINDOWS)
+========================================
+
+Passo a passo para adicionar biacrm.com ao arquivo hosts:
+
+----------------------------------------
+MÉTODO 1: VIA BLOCO DE NOTAS
+----------------------------------------
+
+1. Pressione Windows + R
+2. Digite: notepad
+3. Pressione Ctrl+Shift+Enter (para abrir como Admin)
+4. OU clique com botão direito no Bloco de Notas e escolha
+   "Executar como administrador"
+
+5. No Bloco de Notas, clique em Arquivo > Abrir
+6. Navegue até: C:\Windows\System32\drivers\etc\
+7. Mude o filtro de "Documentos de Texto" para "Todos os Arquivos"
+8. Abra o arquivo: hosts
+
+9. Adicione estas linhas no final do arquivo:
+   92.113.33.226    biacrm.com
+   92.113.33.226    www.biacrm.com
+
+10. Salve (Ctrl+S)
+11. Feche o Bloco de Notas
+12. Feche e reabra o navegador
+13. Acesse: https://biacrm.com
+
+----------------------------------------
+MÉTODO 2: VIA POWERSHELL (ADMIN)
+----------------------------------------
+
+1. Abra PowerShell como Administrador:
+   - Clique com botão direito no PowerShell
+   - Escolha "Executar como administrador"
+
+2. Execute:
+   Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "`n92.113.33.226    biacrm.com"
+   Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "92.113.33.226    www.biacrm.com"
+
+3. Limpe o cache DNS:
+   ipconfig /flushdns
+
+4. Feche e reabra o navegador
+
+----------------------------------------
+VERIFICAR SE FUNCIONOU:
+----------------------------------------
+
+# No PowerShell:
+nslookup biacrm.com
+# Deve retornar: 92.113.33.226
+
+# OU
+ping biacrm.com
+# Deve mostrar: 92.113.33.226
+
+----------------------------------------
+REMOVER ENTRADA (quando DNS estiver configurado):
+----------------------------------------
+
+1. Abra o arquivo hosts como Admin (mesmo processo acima)
+2. Remova as linhas que você adicionou
+3. Salve
+4. Execute: ipconfig /flushdns
+
+========================================
+
+

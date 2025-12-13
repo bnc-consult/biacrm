@@ -1,0 +1,55 @@
+========================================
+  DEPLOY EM PRODUÇÃO - COMANDOS FINAIS
+========================================
+
+✅ CAMINHO CONFIRMADO NO SERVIDOR:
+- Backend: /var/www/biacrm/api/
+
+❓ FRONTEND: Não encontrado no servidor
+   (Provavelmente em outro servidor/domínio ou ainda não deployado)
+
+----------------------------------------
+COMANDOS PARA DEPLOY DO BACKEND
+----------------------------------------
+
+Execute na raiz do projeto:
+
+# 1. Build do backend
+cd backend
+npm run build
+cd ..
+
+# 2. Enviar arquivos compilados
+scp -r backend/dist/* root@92.113.33.226:/var/www/biacrm/api/dist/
+
+# 3. Enviar package.json
+scp backend/package.json root@92.113.33.226:/var/www/biacrm/api/
+
+# 4. Enviar package-lock.json
+scp backend/package-lock.json root@92.113.33.226:/var/www/biacrm/api/
+
+----------------------------------------
+APÓS O UPLOAD - Comandos no servidor
+----------------------------------------
+
+ssh root@92.113.33.226
+cd /var/www/biacrm/api
+npm install --production
+npm run migrate  # Se necessário
+npm start
+
+----------------------------------------
+SOBRE O FRONTEND
+----------------------------------------
+
+Se o frontend estiver em outro servidor/domínio:
+- Faça o deploy do frontend separadamente
+- Ou configure o Nginx para servir o frontend de outro local
+
+Se o frontend ainda não foi deployado:
+- Faça o build: cd frontend && npm run build
+- Envie para o servidor apropriado conforme sua arquitetura
+
+========================================
+
+

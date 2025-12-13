@@ -1,0 +1,57 @@
+========================================
+  SOLUÇÃO RÁPIDA: ARQUIVO HOSTS
+========================================
+
+Como o DNS está configurado mas pode levar tempo para propagar,
+use o arquivo hosts para acesso imediato:
+
+----------------------------------------
+PASSO A PASSO:
+----------------------------------------
+
+1. Abra PowerShell como Administrador:
+   - Windows + X
+   - Escolha "Windows PowerShell (Admin)"
+   - OU clique com botão direito → "Executar como administrador"
+
+2. Execute este comando:
+   Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "`n92.113.33.226    biacrm.com"
+   Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "92.113.33.226    www.biacrm.com"
+
+3. Limpe o cache DNS novamente:
+   ipconfig /flushdns
+
+4. Feche TODOS os navegadores completamente
+
+5. Abra o navegador novamente
+
+6. Acesse: https://biacrm.com
+
+----------------------------------------
+OU VIA BLOCO DE NOTAS:
+----------------------------------------
+
+1. Windows + R
+2. Digite: notepad
+3. Ctrl+Shift+Enter (abre como Admin)
+4. Arquivo > Abrir
+5. Navegue até: C:\Windows\System32\drivers\etc\
+6. Mude filtro para "Todos os Arquivos"
+7. Abra: hosts
+8. Adicione no final:
+   92.113.33.226    biacrm.com
+   92.113.33.226    www.biacrm.com
+9. Salve (Ctrl+S)
+10. Execute: ipconfig /flushdns
+11. Feche e reabra navegador
+
+----------------------------------------
+VERIFICAR SE FUNCIONOU:
+----------------------------------------
+
+ping biacrm.com
+# Deve mostrar: 92.113.33.226
+
+========================================
+
+

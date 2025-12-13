@@ -1,0 +1,54 @@
+========================================
+  COMANDOS CORRIGIDOS PARA DEPLOY
+========================================
+
+PROBLEMA: O diretório /var/www/biacrm/backend/dist não existe no servidor.
+
+SOLUÇÃO: Execute estes comandos nesta ordem:
+
+----------------------------------------
+PASSO 1: Criar diretórios no servidor
+----------------------------------------
+ssh root@92.113.33.226
+mkdir -p /var/www/biacrm/backend/dist
+mkdir -p /var/www/biacrm/frontend/dist
+exit
+
+----------------------------------------
+PASSO 2: Enviar arquivos do BACKEND
+----------------------------------------
+# Opção A: Enviar o diretório inteiro (cria automaticamente)
+scp -r backend/dist root@92.113.33.226:/var/www/biacrm/backend/
+
+# Opção B: Enviar arquivos individualmente (se diretório já existe)
+scp -r backend/dist/* root@92.113.33.226:/var/www/biacrm/backend/dist/
+
+# Enviar package.json
+scp backend/package.json root@92.113.33.226:/var/www/biacrm/backend/
+
+# Enviar package-lock.json
+scp backend/package-lock.json root@92.113.33.226:/var/www/biacrm/backend/
+
+----------------------------------------
+PASSO 3: Enviar arquivos do FRONTEND
+----------------------------------------
+# Opção A: Enviar o diretório inteiro (cria automaticamente)
+scp -r frontend/dist root@92.113.33.226:/var/www/biacrm/frontend/
+
+# Opção B: Enviar arquivos individualmente (se diretório já existe)
+scp -r frontend/dist/* root@92.113.33.226:/var/www/biacrm/frontend/dist/
+
+========================================
+COMANDOS ALTERNATIVOS (TUDO EM UM)
+========================================
+
+# Criar diretórios e enviar backend
+ssh root@92.113.33.226 "mkdir -p /var/www/biacrm/backend/dist && mkdir -p /var/www/biacrm/frontend/dist"
+scp -r backend/dist root@92.113.33.226:/var/www/biacrm/backend/
+scp backend/package.json root@92.113.33.226:/var/www/biacrm/backend/
+scp backend/package-lock.json root@92.113.33.226:/var/www/biacrm/backend/
+scp -r frontend/dist root@92.113.33.226:/var/www/biacrm/frontend/
+
+========================================
+
+

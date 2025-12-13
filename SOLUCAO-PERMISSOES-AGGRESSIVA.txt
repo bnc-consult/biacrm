@@ -1,0 +1,81 @@
+========================================
+  SOLUÇÃO AGRESSIVA DE PERMISSÕES
+========================================
+
+O problema pode estar nos diretórios PAI do caminho.
+O Nginx precisa de permissão de EXECUÇÃO (x) em TODOS os diretórios
+do caminho para poder acessar os arquivos.
+
+----------------------------------------
+EXECUTE ESTES COMANDOS NO SERVIDOR:
+----------------------------------------
+
+ssh root@92.113.33.226
+
+# 1. Corrigir TODOS os diretórios do caminho
+chmod 755 /domains/
+chmod 755 /domains/biacrm.com/
+chmod 755 /domains/biacrm.com/public_html/
+chmod 755 /domains/biacrm.com/public_html/assets/
+
+# 2. Corrigir todos os arquivos
+find /domains/biacrm.com/public_html -type f -exec chmod 644 {} \;
+
+# 3. Corrigir todos os diretórios recursivamente
+find /domains/biacrm.com/public_html -type d -exec chmod 755 {} \;
+
+# 4. Verificar permissões
+ls -la /domains/
+ls -la /domains/biacrm.com/
+ls -la /domains/biacrm.com/public_html/
+ls -la /domains/biacrm.com/public_html/assets/
+
+# 5. Verificar qual usuário o Nginx está usando
+ps aux | grep nginx | grep -v grep | head -1
+
+# 6. Testar acesso como usuário do Nginx
+# Se o Nginx roda como www-data:
+sudo -u www-data test -r /domains/biacrm.com/public_html/assets/index-B3IYLqaJ.js && echo "OK" || echo "ERRO"
+
+# 7. Verificar logs mais recentes (após o reload)
+tail -20 /var/log/nginx/error.log | tail -5
+
+# 8. Reiniciar Nginx completamente (não só reload)
+systemctl restart nginx
+
+----------------------------------------
+SE AINDA NÃO FUNCIONAR:
+----------------------------------------
+
+1. Verificar configuração do Nginx:
+   cat /etc/nginx/sites-enabled/biacrm
+
+2. Verificar se há user directive no nginx.conf:
+   grep -i "user" /etc/nginx/nginx.conf
+
+3. Verificar se o diretório /domains existe e tem permissão:
+   ls -ld /domains/
+
+4. Tentar mudar o owner dos arquivos para www-data:
+   chown -R www-data:www-data /domains/biacrm.com/public_html/
+
+5. Verificar se há SELinux bloqueando:
+   getenforce
+   # Se estiver "Enforcing", pode ser necessário:
+   setenforce 0  # Temporariamente desabilitar para testar
+
+----------------------------------------
+VERIFICAR LOGS EM TEMPO REAL:
+----------------------------------------
+
+# Em um terminal, execute:
+tail -f /var/log/nginx/error.log
+
+# Em outro terminal, acesse o site ou faça:
+curl -I https://biacrm.com/assets/index-B3IYLqaJ.js
+
+# Veja se aparecem novos erros de permissão
+
+========================================
+
+

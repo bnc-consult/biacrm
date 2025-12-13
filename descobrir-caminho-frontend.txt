@@ -1,0 +1,55 @@
+========================================
+  COMO DESCOBRIR O CAMINHO DO FRONTEND
+========================================
+
+Execute estes comandos no servidor para descobrir onde o frontend está:
+
+----------------------------------------
+OPÇÃO 1: Verificar estrutura de diretórios
+----------------------------------------
+ssh root@92.113.33.226
+ls -la /var/www/biacrm/
+
+Isso mostrará todos os diretórios em /var/www/biacrm/
+
+----------------------------------------
+OPÇÃO 2: Procurar arquivos do frontend
+----------------------------------------
+ssh root@92.113.33.226
+find /var/www/biacrm -name "index.html" -type f
+
+Isso encontrará o arquivo index.html do frontend
+
+----------------------------------------
+OPÇÃO 3: Verificar configuração do Nginx/Apache
+----------------------------------------
+ssh root@92.113.33.226
+cat /etc/nginx/sites-enabled/biacrm
+# OU
+cat /etc/apache2/sites-enabled/biacrm.conf
+
+Isso mostrará onde o servidor web está servindo os arquivos
+
+----------------------------------------
+OPÇÃO 4: Verificar processos Node.js
+----------------------------------------
+ssh root@92.113.33.226
+ps aux | grep node
+
+Isso mostrará se há algum processo Node.js servindo o frontend
+
+========================================
+POSSÍVEIS CAMINHOS:
+========================================
+
+Baseado na estrutura comum, o frontend pode estar em:
+
+1. /var/www/biacrm/dist/          (mais comum)
+2. /var/www/biacrm/               (raiz do projeto)
+3. /var/www/biacrm/public/        (se usar public)
+4. /var/www/biacrm/www/           (alternativa)
+5. /var/www/html/biacrm/          (se usar html padrão)
+
+========================================
+
+

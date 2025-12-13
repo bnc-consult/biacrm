@@ -1,0 +1,77 @@
+========================================
+  SOLUÇÃO: CACHE DO NAVEGADOR
+========================================
+
+Os arquivos foram enviados corretamente ✅
+Mas o navegador pode estar usando cache antigo!
+
+----------------------------------------
+SOLUÇÕES PARA LIMPAR CACHE
+----------------------------------------
+
+1. FORÇAR RELOAD (Mais rápido):
+   - Windows/Linux: Ctrl+Shift+R
+   - Mac: Cmd+Shift+R
+   - Isso força o navegador a recarregar sem cache
+
+2. MODO ANÔNIMO/PRIVADO:
+   - Abra uma janela anônima/privada
+   - Acesse https://biacrm.com
+   - Se funcionar, confirma que é cache
+
+3. LIMPAR CACHE COMPLETO:
+   Chrome/Edge:
+   - F12 (DevTools)
+   - Clique com botão direito no botão de reload
+   - Escolha "Empty Cache and Hard Reload"
+   
+   Firefox:
+   - Ctrl+Shift+Delete
+   - Marque "Cache"
+   - Limpar agora
+
+4. DESABILITAR CACHE (Desenvolvimento):
+   - F12 (DevTools)
+   - Network tab
+   - Marque "Disable cache"
+   - Mantenha DevTools aberto
+
+----------------------------------------
+VERIFICAR SE ATUALIZOU NO SERVIDOR
+----------------------------------------
+
+ssh root@92.113.33.226
+ls -lrt /domains/biacrm.com/public_html/
+
+# Verificar data/hora dos arquivos
+# Deve mostrar Dec 11 00:25 ou mais recente
+
+# Verificar conteúdo do index.html
+cat /domains/biacrm.com/public_html/index.html
+
+# Verificar se assets foram enviados
+ls -la /domains/biacrm.com/public_html/assets/
+
+----------------------------------------
+SE AINDA NÃO FUNCIONAR
+----------------------------------------
+
+1. Verificar se todos os arquivos foram enviados:
+   ssh root@92.113.33.226
+   ls -la /domains/biacrm.com/public_html/assets/
+   # Deve ter index-B3IYLqaJ.js e index-D6a3CKmr.css
+
+2. Verificar permissões:
+   chmod -R 755 /domains/biacrm.com/public_html/
+
+3. Reiniciar Nginx (se necessário):
+   systemctl reload nginx
+   # OU
+   nginx -s reload
+
+4. Verificar logs do Nginx:
+   tail -f /var/log/nginx/error.log
+
+========================================
+
+

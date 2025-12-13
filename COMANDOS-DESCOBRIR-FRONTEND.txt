@@ -1,0 +1,52 @@
+========================================
+  DESCOBRIR ONDE ESTÁ O FRONTEND
+========================================
+
+Execute estes comandos NO SERVIDOR:
+
+ssh root@92.113.33.226
+
+# 1. Ver configuração do biacrm.com
+cat /etc/nginx/sites-available/biacrm.com
+
+# 2. Ver configuração do biacrm
+cat /etc/nginx/sites-available/biacrm
+
+# 3. Procurar linha "root" nos arquivos
+grep -h "root" /etc/nginx/sites-available/biacrm* | grep -v "#"
+
+# 4. Verificar diretórios mencionados
+# (Substitua /caminho pelo que encontrar nos arquivos acima)
+ls -la /var/www/biacrm/
+ls -la /var/www/html/
+
+# 5. Procurar index.html
+find /var/www -name "index.html" -type f 2>/dev/null
+
+========================================
+O QUE PROCURAR
+========================================
+
+Nos arquivos de configuração, procure por linhas como:
+
+root /var/www/biacrm/dist;
+root /var/www/html/biacrm;
+root /var/www/biacrm;
+
+Essa linha indica onde o Nginx está servindo os arquivos do frontend.
+
+========================================
+APÓS DESCOBRIR
+========================================
+
+1. Build já foi feito ✅ (frontend/dist/)
+
+2. Enviar arquivos:
+   scp -r frontend/dist/* root@92.113.33.226:/CAMINHO/DESCOBERTO/
+   Senha: IAbots2025-@+
+
+3. Limpar cache do navegador (Ctrl+Shift+R)
+
+========================================
+
+

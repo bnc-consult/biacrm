@@ -1,0 +1,40 @@
+========================================
+  COMANDOS CORRETOS PARA DEPLOY
+========================================
+
+Caminhos corretos no servidor:
+- Backend: /var/www/biacrm/api/
+- Frontend: /var/www/biacrm/ (ou /var/www/biacrm/dist/)
+
+----------------------------------------
+BACKEND
+----------------------------------------
+scp -r backend/dist/* root@92.113.33.226:/var/www/biacrm/api/dist/
+scp backend/package.json root@92.113.33.226:/var/www/biacrm/api/
+scp backend/package-lock.json root@92.113.33.226:/var/www/biacrm/api/
+
+----------------------------------------
+FRONTEND
+----------------------------------------
+scp -r frontend/dist/* root@92.113.33.226:/var/www/biacrm/dist/
+
+========================================
+APÓS O UPLOAD - Comandos no servidor
+========================================
+
+1. Conectar ao servidor:
+   ssh root@92.113.33.226
+
+2. Instalar dependências do backend:
+   cd /var/www/biacrm/api
+   npm install --production
+
+3. Executar migrações (se necessário):
+   npm run migrate
+
+4. Reiniciar o servidor backend:
+   npm start
+
+========================================
+
+

@@ -1,0 +1,41 @@
+========================================
+  COMANDOS PARA DEPLOY MANUAL
+========================================
+
+Os builds já foram concluídos! Agora execute estes comandos SCP:
+
+----------------------------------------
+1. BACKEND - Enviar arquivos compilados
+----------------------------------------
+scp -r backend/dist/* root@92.113.33.226:/var/www/biacrm/backend/dist/
+scp backend/package.json root@92.113.33.226:/var/www/biacrm/backend/
+scp backend/package-lock.json root@92.113.33.226:/var/www/biacrm/backend/
+
+----------------------------------------
+2. FRONTEND - Enviar arquivos estáticos
+----------------------------------------
+scp -r frontend/dist/* root@92.113.33.226:/var/www/biacrm/frontend/dist/
+
+========================================
+APÓS O UPLOAD - Comandos no servidor
+========================================
+
+1. Conectar ao servidor:
+   ssh root@92.113.33.226
+
+2. Instalar dependências do backend:
+   cd /var/www/biacrm/backend
+   npm install --production
+
+3. Executar migrações (se necessário):
+   npm run migrate
+
+4. Reiniciar o servidor backend:
+   npm start
+
+5. Verificar se está funcionando:
+   curl http://localhost:3000/health
+
+========================================
+
+

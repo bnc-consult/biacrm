@@ -1,0 +1,62 @@
+========================================
+  VERIFICAR SE SERVIDOR RESPONDE
+========================================
+
+Mesmo com DNS configurado, vamos verificar se o servidor
+está respondendo corretamente.
+
+----------------------------------------
+EXECUTE NO SERVIDOR:
+----------------------------------------
+
+ssh root@92.113.33.226
+
+# 1. Verificar se Nginx aceita requisições sem Host header
+curl -I http://localhost/
+curl -I -H "Host: biacrm.com" http://localhost/
+
+# 2. Verificar configuração do Nginx
+cat /etc/nginx/sites-available/biacrm | grep -A 5 "server_name"
+
+# 3. Verificar se há server block padrão
+# Se não houver, pode ser necessário adicionar um que aceite qualquer host
+
+# 4. Testar acesso externo ao IP
+# (de outro servidor ou ferramenta online)
+curl -I http://92.113.33.226/
+
+# Se retornar erro "No server name", o Nginx precisa de um
+# server block padrão ou precisa aceitar requisições pelo IP
+
+----------------------------------------
+SE O NGINX NÃO ACEITA REQUISIÇÕES PELO IP:
+----------------------------------------
+
+Você pode adicionar um server block padrão:
+
+# Editar configuração
+nano /etc/nginx/sites-available/biacrm
+
+# Adicionar no início (antes do server block do biacrm.com):
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    
+    root /domains/biacrm.com/public_html;
+    index index.html;
+    
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+
+# Testar
+nginx -t
+
+# Recarregar
+systemctl reload nginx
+
+========================================
+
+

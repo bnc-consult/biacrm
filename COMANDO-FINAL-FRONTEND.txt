@@ -1,0 +1,51 @@
+========================================
+  COMANDO FINAL PARA ATUALIZAR FRONTEND
+========================================
+
+Build já foi feito ✅
+Agora envie os arquivos:
+
+----------------------------------------
+COMANDO ÚNICO:
+----------------------------------------
+scp -r frontend/dist/* root@92.113.33.226:/domains/biacrm.com/public_html/
+Senha: IAbots2025-@+
+
+----------------------------------------
+APÓS ENVIAR:
+----------------------------------------
+
+1. LIMPAR CACHE DO NAVEGADOR:
+   - Pressione Ctrl+Shift+R (Windows/Linux)
+   - Pressione Cmd+Shift+R (Mac)
+   - OU abra em modo anônimo/privado
+
+2. VERIFICAR NO SERVIDOR:
+   ssh root@92.113.33.226
+   ls -lrt /domains/biacrm.com/public_html/
+   # Deve mostrar arquivos com data/hora recente
+   
+   ls -la /domains/biacrm.com/public_html/assets/
+   # Deve ter index-B3IYLqaJ.js e index-D6a3CKmr.css
+
+3. VERIFICAR PERMISSÕES (se necessário):
+   chmod -R 755 /domains/biacrm.com/public_html/
+
+4. REINICIAR NGINX (se necessário):
+   systemctl reload nginx
+
+========================================
+IMPORTANTE SOBRE CACHE
+========================================
+
+O navegador pode estar usando cache antigo!
+SEMPRE pressione Ctrl+Shift+R após atualizar.
+
+Se ainda não funcionar:
+- Limpe o cache completamente do navegador
+- OU teste em modo anônimo/privado
+- OU adicione ?v=2 no final da URL: https://biacrm.com?v=2
+
+========================================
+
+

@@ -1,0 +1,73 @@
+========================================
+  SOLUÇÃO: CACHE DNS E PROPAGAÇÃO
+========================================
+
+DNS está configurado corretamente ✅
+Mas ainda não está resolvendo localmente.
+
+Isso geralmente é causado por:
+1. Cache DNS local
+2. Propagação DNS ainda em andamento
+3. Servidor DNS do provedor de internet
+
+----------------------------------------
+SOLUÇÕES:
+----------------------------------------
+
+1. LIMPAR CACHE DNS NO WINDOWS:
+
+# No PowerShell (como Admin):
+ipconfig /flushdns
+
+# OU via CMD (como Admin):
+ipconfig /flushdns
+
+Depois feche e reabra o navegador.
+
+----------------------------------------
+2. USAR DNS PÚBLICO (TEMPORÁRIO):
+
+# No PowerShell (como Admin):
+# Alterar DNS para Google temporariamente
+
+# Ou adicionar ao hosts (mais rápido):
+# C:\Windows\System32\drivers\etc\hosts
+92.113.33.226    biacrm.com
+92.113.33.226    www.biacrm.com
+
+Depois: ipconfig /flushdns
+
+----------------------------------------
+3. VERIFICAR PROPAGAÇÃO DNS:
+
+Acesse: https://www.whatsmydns.net/#A/biacrm.com
+
+Verifique se o DNS já propagou em diferentes locais.
+Se ainda não propagou em todos os locais, aguarde algumas horas.
+
+----------------------------------------
+4. TESTAR COM DNS PÚBLICO:
+
+# No PowerShell:
+nslookup biacrm.com 8.8.8.8
+# (usando DNS do Google)
+
+Se funcionar com 8.8.8.8 mas não com seu DNS local,
+o problema é cache/propagação do seu provedor.
+
+----------------------------------------
+5. ACESSO TEMPORÁRIO VIA HOSTS:
+
+Enquanto o DNS não propaga completamente:
+
+1. Abra como Admin: C:\Windows\System32\drivers\etc\hosts
+2. Adicione:
+   92.113.33.226    biacrm.com
+   92.113.33.226    www.biacrm.com
+3. Salve
+4. Execute: ipconfig /flushdns
+5. Feche e reabra navegador
+
+========================================
+
+

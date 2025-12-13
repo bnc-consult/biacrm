@@ -1,0 +1,99 @@
+========================================
+  SOLUÇÃO: PROBLEMA DE DNS
+========================================
+
+ERRO: DNS_PROBE_FINISHED_NXDOMAIN
+O domínio biacrm.com não está resolvendo no DNS.
+
+----------------------------------------
+DIAGNÓSTICO:
+----------------------------------------
+
+1. VERIFICAR SE O DNS ESTÁ CONFIGURADO:
+
+# No seu computador (Windows PowerShell):
+nslookup biacrm.com
+# OU
+Resolve-DnsName biacrm.com
+
+# Deve retornar o IP: 92.113.33.226
+
+# Se não retornar nada ou retornar erro, o DNS não está configurado.
+
+----------------------------------------
+2. VERIFICAR NO SERVIDOR:
+----------------------------------------
+
+ssh root@92.113.33.226
+
+# Verificar se o servidor responde no IP diretamente
+curl -I http://92.113.33.226
+# Deve funcionar
+
+# Verificar configuração do Nginx para biacrm.com
+cat /etc/nginx/sites-available/biacrm
+
+# Verificar se há configuração SSL
+ls -la /etc/letsencrypt/live/biacrm.com/
+
+----------------------------------------
+3. VERIFICAR DNS EXTERNO:
+----------------------------------------
+
+# Usar ferramentas online:
+# - https://www.whatsmydns.net/#A/biacrm.com
+# - https://dnschecker.org/#A/biacrm.com
+
+# OU via linha de comando:
+# No Windows PowerShell:
+nslookup biacrm.com 8.8.8.8
+# (usando DNS do Google)
+
+# No Linux/Mac:
+dig biacrm.com @8.8.8.8
+
+----------------------------------------
+SOLUÇÕES:
+----------------------------------------
+
+1. SE O DNS NÃO ESTÁ CONFIGURADO:
+
+Você precisa configurar o DNS no seu provedor de domínio:
+
+Tipo: A
+Nome: @ (ou biacrm.com)
+Valor: 92.113.33.226
+TTL: 3600 (ou padrão)
+
+Tipo: A
+Nome: www
+Valor: 92.113.33.226
+TTL: 3600 (ou padrão)
+
+2. SE O DNS ESTÁ CONFIGURADO MAS NÃO PROPAGOU:
+
+A propagação DNS pode levar até 48 horas.
+Você pode verificar em: https://www.whatsmydns.net/#A/biacrm.com
+
+3. ACESSAR DIRETAMENTE PELO IP (TEMPORÁRIO):
+
+Enquanto o DNS não propaga, você pode acessar:
+http://92.113.33.226
+
+Mas isso pode não funcionar se o Nginx está configurado
+para responder apenas ao domínio biacrm.com.
+
+4. ADICIONAR ENTRADA NO HOSTS (TEMPORÁRIO):
+
+No Windows (como Administrador):
+C:\Windows\System32\drivers\etc\hosts
+
+Adicionar linha:
+92.113.33.226    biacrm.com
+92.113.33.226    www.biacrm.com
+
+Depois salvar e tentar acessar novamente.
+
+========================================
+
+
