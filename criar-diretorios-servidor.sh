@@ -22,3 +22,4 @@ echo "  /var/www/biacrm/backend/dist/"
 echo "  /var/www/biacrm/frontend/dist/"
 
 
+

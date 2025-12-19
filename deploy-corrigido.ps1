@@ -80,3 +80,4 @@ Write-Host "4. Reiniciar o servidor backend: npm start" -ForegroundColor White
 Write-Host ""
 
 
+

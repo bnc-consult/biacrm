@@ -398,7 +398,6 @@ export default function Integrations() {
           setFacebookIntegrations(formattedIntegrations);
           setIsFacebookLoggedIn(true);
           localStorage.setItem('facebookIntegrations', JSON.stringify(formattedIntegrations));
-          setRefreshKey(prev => prev + 1); // Forçar atualização do componente
           console.log(`✅ ${formattedIntegrations.length} integrações do Facebook carregadas e exibidas`);
         } else {
           console.warn('⚠️ Nenhuma integração encontrada no backend');
@@ -733,8 +732,19 @@ export default function Integrations() {
   };
 
   // Excluir integração do Facebook
-  const handleDeleteFacebook = (id: string) => {
-    if (window.confirm('Tem certeza que deseja excluir esta integração do Facebook?')) {
+  const handleDeleteFacebook = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir esta integração do Facebook?')) {
+      return;
+    }
+
+    try {
+      // Extrair o ID numérico do formato "fb_{id}"
+      const integrationId = id.replace('fb_', '');
+      
+      // Chamar API para deletar no backend
+      await api.delete(`/integrations/facebook/${integrationId}`);
+      
+      // Remover do estado local após sucesso
       const updatedIntegrations = facebookIntegrations.filter(fb => fb.id !== id);
       setFacebookIntegrations(updatedIntegrations);
       localStorage.setItem('facebookIntegrations', JSON.stringify(updatedIntegrations));
@@ -744,6 +754,20 @@ export default function Integrations() {
         setIsFacebookLoggedIn(false);
         localStorage.removeItem('facebookLoggedIn');
       }
+      
+      // Recarregar integrações do backend para garantir sincronização
+      await loadFacebookIntegrations();
+      
+      console.log('✅ Integração do Facebook excluída com sucesso');
+    } catch (error: any) {
+      console.error('Erro ao excluir integração do Facebook:', error);
+      const errorMessage = error.response?.data?.message || 
+                          error.message || 
+                          'Erro ao excluir integração do Facebook';
+      alert('Erro ao excluir: ' + errorMessage);
+      
+      // Recarregar integrações do backend para garantir que está sincronizado
+      await loadFacebookIntegrations();
     }
   };
 

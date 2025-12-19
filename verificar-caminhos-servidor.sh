@@ -33,3 +33,4 @@ grep -r "biacrm" /etc/nginx/sites-enabled/ 2>/dev/null || echo "Nginx não encon
 grep -r "biacrm" /etc/apache2/sites-enabled/ 2>/dev/null || echo "Apache não encontrado ou sem permissão"
 
 
+

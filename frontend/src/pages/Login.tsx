@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -118,6 +118,30 @@ export default function Login() {
             </button>
           </div>
         </form>
+        <div className="mt-6 pt-6 border-t border-gray-200">
+          <div className="flex flex-wrap justify-center gap-4 text-xs text-gray-500">
+            <Link 
+              to="/terms-of-service" 
+              className="hover:text-primary-600 transition-colors"
+            >
+              Termos de Serviço
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link 
+              to="/privacy-policy" 
+              className="hover:text-primary-600 transition-colors"
+            >
+              Política de Privacidade
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link 
+              to="/bncconsultoria" 
+              className="hover:text-primary-600 transition-colors"
+            >
+              BNC Consultoria em IA
+            </Link>
+          </div>
+        </div>
       </div>
     </div>
   );

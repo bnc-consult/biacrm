@@ -34,3 +34,4 @@ O código agora detecta automaticamente o ambiente, mas você **PRECISA** adicio
 
 **Não é mais necessário alterar o .env manualmente!** O código detecta automaticamente o ambiente.
 
+

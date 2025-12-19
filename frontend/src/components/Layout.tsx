@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 import { 
@@ -321,12 +321,61 @@ export default function Layout() {
           </div>
         </div>
 
-        {/* Footer */}
-        <div className={`p-4 border-t border-gray-200 space-y-2 ${sidebarOpen ? 'block' : 'hidden'}`}>
+        {/* Footer - Links sempre visíveis na sidebar */}
+        <div className={`p-4 border-t border-gray-200 ${sidebarOpen ? 'block' : 'block'}`}>
           <div className="text-xs text-gray-500 space-y-1">
-            <div>Política de privacidade</div>
-            <div>Bia CRM - Gestão de leads para imobiliárias</div>
-            <div>© 2022 All Rights Reserved</div>
+            {sidebarOpen ? (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  <Link 
+                    to="/terms-of-service" 
+                    className="hover:text-primary-600 transition-colors underline"
+                  >
+                    Termos de Serviço
+                  </Link>
+                  <span>•</span>
+                  <Link 
+                    to="/privacy-policy" 
+                    className="hover:text-primary-600 transition-colors underline"
+                  >
+                    Política de Privacidade
+                  </Link>
+                  <span>•</span>
+                  <Link 
+                    to="/bncconsultoria" 
+                    className="hover:text-primary-600 transition-colors underline"
+                  >
+                    BNC Consultoria
+                  </Link>
+                </div>
+                <div>Bia CRM - Gestão de leads para imobiliárias</div>
+                <div>© 2024 All Rights Reserved</div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center gap-2">
+                <Link 
+                  to="/terms-of-service" 
+                  className="hover:text-primary-600 transition-colors"
+                  title="Termos de Serviço"
+                >
+                  📄
+                </Link>
+                <Link 
+                  to="/privacy-policy" 
+                  className="hover:text-primary-600 transition-colors"
+                  title="Política de Privacidade"
+                >
+                  🔒
+                </Link>
+                <Link 
+                  to="/bncconsultoria" 
+                  className="hover:text-primary-600 transition-colors"
+                  title="BNC Consultoria em IA"
+                >
+                  🚀
+                </Link>
+              </div>
+            )}
           </div>
         </div>
       </aside>
@@ -334,7 +383,7 @@ export default function Layout() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden bg-white">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between flex-shrink-0">
           {/* Left: Empty space */}
           <div className="flex items-center space-x-4">
           </div>
@@ -396,6 +445,36 @@ export default function Layout() {
         <div className="flex-1 overflow-auto bg-gray-50">
           <Outlet />
         </div>
+        
+        {/* Footer Fixo - Links sempre visíveis */}
+        <footer className="bg-white border-t border-gray-200 px-6 py-3 flex-shrink-0">
+          <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-gray-500">
+            <Link 
+              to="/terms-of-service" 
+              className="hover:text-primary-600 transition-colors underline"
+            >
+              Termos de Serviço
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link 
+              to="/privacy-policy" 
+              className="hover:text-primary-600 transition-colors underline"
+            >
+              Política de Privacidade
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link 
+              to="/bncconsultoria" 
+              className="hover:text-primary-600 transition-colors underline"
+            >
+              BNC Consultoria em IA
+            </Link>
+            <span className="text-gray-300">•</span>
+            <span>Bia CRM - Gestão de leads para imobiliárias</span>
+            <span className="text-gray-300">•</span>
+            <span>© 2024 All Rights Reserved</span>
+          </div>
+        </footer>
       </main>
 
       {/* Modal de Notificações */}

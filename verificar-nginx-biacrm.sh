@@ -41,3 +41,4 @@ echo "4. Procurando index.html nos diretórios encontrados:"
 find /var/www -name "index.html" -type f 2>/dev/null | head -10
 
 
+

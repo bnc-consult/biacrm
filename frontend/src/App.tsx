@@ -8,6 +8,9 @@ import LeadsAndamento from './pages/LeadsAndamento';
 import FunnelConfig from './pages/FunnelConfig';
 import Integrations from './pages/Integrations';
 import Appointments from './pages/Appointments';
+import TermsOfService from './pages/TermsOfService';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import BNCConsultoria from './pages/BNCConsultoria';
 import Layout from './components/Layout';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -31,6 +34,9 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/terms-of-service" element={<TermsOfService />} />
+      <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+      <Route path="/bncconsultoria" element={<BNCConsultoria />} />
       <Route
         path="/"
         element={

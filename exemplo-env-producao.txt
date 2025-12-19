@@ -1,0 +1,47 @@
+# ============================================
+# ARQUIVO .env PARA PRODUÇÃO
+# ============================================
+# Localização: /var/www/biacrm/api/.env
+# 
+# IMPORTANTE: Substitua os valores abaixo pelos valores reais!
+# ============================================
+
+# Servidor
+PORT=3000
+NODE_ENV=production
+
+# Database
+DATABASE_URL=sqlite:./database.sqlite
+
+# JWT Secret (ALTERE ESTE VALOR!)
+JWT_SECRET=sua-chave-secreta-super-segura-aqui-altere-em-producao
+JWT_EXPIRES_IN=7d
+
+# CORS
+CORS_ORIGIN=https://biacrm.com
+
+# Frontend URL
+FRONTEND_URL=https://biacrm.com
+
+# Facebook Integration (OBRIGATÓRIO para integração Facebook)
+FACEBOOK_APP_ID=seu_facebook_app_id_aqui
+FACEBOOK_APP_SECRET=seu_facebook_app_secret_aqui
+
+# Facebook Redirect URI (opcional - será detectado automaticamente se não configurado)
+# FACEBOOK_REDIRECT_URI=https://biacrm.com/api/integrations/facebook/callback
+
+# Instagram Integration (opcional - usa Facebook se não configurado)
+# INSTAGRAM_APP_ID=seu_instagram_app_id_aqui
+# INSTAGRAM_APP_SECRET=seu_instagram_app_secret_aqui
+# INSTAGRAM_REDIRECT_URI=https://biacrm.com/api/integrations/instagram/callback
+
+# ============================================
+# NOTAS:
+# ============================================
+# 1. NÃO use espaços ao redor do sinal de igual (=)
+# 2. NÃO use aspas nos valores (a menos que seja necessário)
+# 3. Linhas começando com # são comentários
+# 4. Após alterar este arquivo, reinicie o backend: pm2 restart biacrm-backend
+# ============================================
+
+

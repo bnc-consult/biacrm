@@ -15,3 +15,4 @@ Write-Host "bash /tmp/verificar-frontend-completo.sh" -ForegroundColor White
 Write-Host ""
 
 
+

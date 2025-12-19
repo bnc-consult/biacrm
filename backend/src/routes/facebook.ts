@@ -31,7 +31,8 @@ const getRedirectUri = (req: express.Request): string => {
   }
   
   // Detecta automaticamente baseado na requisição
-  const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'http';
+  const forwardedProto = req.headers['x-forwarded-proto'] as string;
+  const protocol = req.protocol || (forwardedProto ? forwardedProto.split(',')[0] : null) || 'http';
   const host = req.get('host') || req.headers.host || 'localhost:3000';
   
   // Se for localhost, usa http
@@ -62,6 +63,7 @@ router.post('/connect', authenticate, async (req: AuthRequest, res) => {
     let finalPageName = page_name;
 
     // Validar o token com a API do Facebook antes de salvar
+    // Usar apenas validação básica que não requer permissões especiais
     try {
       const tokenValidation = await axios.get(
         `${FACEBOOK_API_BASE}/me`,
@@ -76,18 +78,19 @@ router.post('/connect', authenticate, async (req: AuthRequest, res) => {
       const userData = tokenValidation.data;
       
       // Se não houver page_id fornecido, usar o ID do usuário
-      if (!finalPageId || finalPageId === 'user_account') {
+      if (!finalPageId || finalPageId === 'user_account' || finalPageId === '') {
         finalPageId = `user_${userData.id}`;
         finalPageName = finalPageName || userData.name || 'Conta Pessoal';
       } else {
-        // Verificar se a página pertence ao usuário (se page_id foi fornecido)
+        // Tentar verificar se a página pertence ao usuário (OPCIONAL - não bloquear se falhar)
+        // Esta validação pode falhar se não tiver permissões especiais, então não é crítica
         try {
           const pagesResponse = await axios.get(
             `${FACEBOOK_API_BASE}/me/accounts`,
             {
               params: {
                 access_token: access_token,
-                fields: 'id,name,access_token'
+                fields: 'id,name'
               }
             }
           );
@@ -102,29 +105,51 @@ router.post('/connect', authenticate, async (req: AuthRequest, res) => {
             finalPageName = userData.name || 'Conta Pessoal';
           }
         } catch (pagesError: any) {
-          // Se não conseguir buscar páginas, usar conta do usuário
-          console.warn('Não foi possível buscar páginas, usando conta do usuário:', pagesError.message);
+          // Se não conseguir buscar páginas (por falta de permissões), usar conta do usuário
+          // NÃO bloquear a criação da integração - apenas usar a conta do usuário
+          const pagesErrorData = pagesError.response && pagesError.response.data;
+          const errorCode = pagesErrorData && pagesErrorData.error && pagesErrorData.error.code;
+          
+          console.warn('Não foi possível buscar páginas do Facebook (pode ser falta de permissões). Usando conta do usuário:', {
+            error: pagesErrorData && pagesErrorData.error ? pagesErrorData.error.message : pagesError.message,
+            code: errorCode
+          });
+          
+          // Usar conta do usuário como fallback
           finalPageId = `user_${userData.id}`;
           finalPageName = userData.name || 'Conta Pessoal';
         }
       }
     } catch (validationError: any) {
-      console.error('Facebook token validation error:', validationError.response?.data || validationError.message);
+      const errorData = validationError.response && validationError.response.data;
+      console.error('Facebook token validation error:', errorData || validationError.message);
       
-      // Se o erro for de autenticação, retornar erro específico
-      if (validationError.response?.data?.error) {
-        const fbError = validationError.response.data.error;
-        return res.status(401).json({ 
-          message: `Token do Facebook inválido: ${fbError.message || 'Credenciais inválidas'}. Por favor, autorize novamente.`,
-          error: 'INVALID_TOKEN',
-          facebookError: fbError
-        });
+      // Se o erro for de autenticação básica (token inválido), retornar erro
+      if (errorData && errorData.error) {
+        const fbError = errorData.error;
+        const errorCode = fbError.code;
+        
+        // Erro 190 ou 102 = token inválido/expirado - bloquear
+        if (errorCode === 190 || errorCode === 102) {
+          return res.status(401).json({ 
+            message: `Token do Facebook inválido ou expirado. Por favor, autorize novamente.`,
+            error: 'INVALID_TOKEN',
+            facebookError: fbError
+          });
+        }
+        
+        // Outros erros (como falta de permissões) - não bloquear, usar conta do usuário
+        console.warn('Erro ao validar token, mas continuando com conta do usuário:', fbError.message);
+        finalPageId = `user_unknown`;
+        finalPageName = finalPageName || 'Conta Pessoal';
+      } else {
+        // Se não conseguir validar, ainda assim permitir criar a integração
+        console.warn('Não foi possível validar o token completamente, mas continuando:', validationError.message);
+        if (!finalPageId) {
+          finalPageId = `user_unknown`;
+          finalPageName = finalPageName || 'Conta Pessoal';
+        }
       }
-
-      return res.status(401).json({ 
-        message: 'Não foi possível validar o token do Facebook. Por favor, autorize novamente.',
-        error: 'TOKEN_VALIDATION_FAILED'
-      });
     }
 
     // Check if integration already exists for this user and page
@@ -242,23 +267,46 @@ router.get('/callback', async (req, res) => {
     if (error || error_reason) {
       console.error('Facebook OAuth error:', { error, error_reason, error_description });
       
-      let frontendUrl = process.env.FRONTEND_URL;
+      // Usar FRONTEND_URL ou CORS_ORIGIN do .env, ou detectar automaticamente
+      let frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN;
+      
       if (!frontendUrl) {
-        const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'http';
+        const forwardedProto = req.headers['x-forwarded-proto'] as string;
+        const protocol = req.protocol || (forwardedProto ? forwardedProto.split(',')[0] : null) || 'http';
         const host = req.get('host') || req.headers.host || 'localhost:3000';
         
-        if (host.includes('localhost') || host.includes('127.0.0.1')) {
-          frontendUrl = 'http://localhost:5173';
+        // Em produção (NODE_ENV=production) ou quando não for localhost, sempre usar biacrm.com
+        // Verificar também se o host da requisição não é localhost
+        const isProduction = process.env.NODE_ENV === 'production';
+        const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1');
+        
+        if (isProduction || !isLocalhost) {
+          // Em produção ou quando não for localhost, usar biacrm.com
+          frontendUrl = 'https://biacrm.com';
         } else {
-          frontendUrl = `https://biacrm.com`;
+          // Apenas em desenvolvimento local usar localhost
+          frontendUrl = 'http://localhost:5173';
         }
+        
+        console.log('Facebook callback - Fallback URL detection:', {
+          NODE_ENV: process.env.NODE_ENV,
+          isProduction,
+          host,
+          isLocalhost,
+          selectedUrl: frontendUrl
+        });
       }
+      
+      // Limpar URL
+      frontendUrl = frontendUrl.replace(/\/$/, '').replace(/:443$/, '').replace(/:80$/, '');
 
       let errorMessage = 'Autenticação falhou. ';
       
+      const errorDescriptionStr = typeof error_description === 'string' ? error_description : '';
+      
       if (error_reason === 'user_denied' || error === 'access_denied') {
         errorMessage += 'Você cancelou a autorização. Por favor, tente novamente e autorize o acesso.';
-      } else if (error_description && error_description.toLowerCase().includes('password')) {
+      } else if (errorDescriptionStr && errorDescriptionStr.toLowerCase().includes('password')) {
         errorMessage += 'Login ou senha incorretos. Por favor, verifique suas credenciais e tente novamente.';
       } else {
         errorMessage += 'Por favor, verifique seu login e senha do Facebook e tente novamente.';
@@ -268,17 +316,38 @@ router.get('/callback', async (req, res) => {
     }
 
     if (!code) {
-      let frontendUrl = process.env.FRONTEND_URL;
+      // Usar FRONTEND_URL ou CORS_ORIGIN do .env, ou detectar automaticamente
+      let frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN;
+      
       if (!frontendUrl) {
-        const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'http';
+        const forwardedProto = req.headers['x-forwarded-proto'] as string;
+        const protocol = req.protocol || (forwardedProto ? forwardedProto.split(',')[0] : null) || 'http';
         const host = req.get('host') || req.headers.host || 'localhost:3000';
         
-        if (host.includes('localhost') || host.includes('127.0.0.1')) {
-          frontendUrl = 'http://localhost:5173';
+        // Em produção (NODE_ENV=production) ou quando não for localhost, sempre usar biacrm.com
+        // Verificar também se o host da requisição não é localhost
+        const isProduction = process.env.NODE_ENV === 'production';
+        const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1');
+        
+        if (isProduction || !isLocalhost) {
+          // Em produção ou quando não for localhost, usar biacrm.com
+          frontendUrl = 'https://biacrm.com';
         } else {
-          frontendUrl = `https://biacrm.com`;
+          // Apenas em desenvolvimento local usar localhost
+          frontendUrl = 'http://localhost:5173';
         }
+        
+        console.log('Facebook callback - Fallback URL detection:', {
+          NODE_ENV: process.env.NODE_ENV,
+          isProduction,
+          host,
+          isLocalhost,
+          selectedUrl: frontendUrl
+        });
       }
+      
+      // Limpar URL
+      frontendUrl = frontendUrl.replace(/\/$/, '').replace(/:443$/, '').replace(/:80$/, '');
       
       return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent('Código de autorização não fornecido. Por favor, verifique seu login e senha do Facebook e tente novamente.')}`);
     }
@@ -290,18 +359,42 @@ router.get('/callback', async (req, res) => {
     // Obter URI de redirecionamento dinamicamente (deve ser o mesmo usado na URL de autorização)
     const redirectUri = getRedirectUri(req);
 
-    // Detectar URL do frontend automaticamente
-    let frontendUrl = process.env.FRONTEND_URL;
-    if (!frontendUrl) {
-      const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'http';
-      const host = req.get('host') || req.headers.host || 'localhost:3000';
-      
-      if (host.includes('localhost') || host.includes('127.0.0.1')) {
-        frontendUrl = 'http://localhost:5173';
-      } else {
-        frontendUrl = `https://biacrm.com`;
-      }
+    // Detectar host da requisição primeiro
+    const host = req.get('host') || req.headers.host || 'localhost:3000';
+    const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1');
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    // Usar FRONTEND_URL ou CORS_ORIGIN do .env
+    let frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN;
+    
+    // Log para debug
+    console.log('Facebook callback - Frontend URL detection:', {
+      FRONTEND_URL: process.env.FRONTEND_URL || 'não definido',
+      CORS_ORIGIN: process.env.CORS_ORIGIN || 'não definido',
+      detected: frontendUrl || 'não detectado',
+      host: host,
+      isLocalhost: isLocalhost,
+      NODE_ENV: process.env.NODE_ENV,
+      isProduction: isProduction
+    });
+    
+    // IMPORTANTE: Se não for localhost, SEMPRE usar biacrm.com (mesmo que variáveis não estejam definidas)
+    if (!isLocalhost) {
+      frontendUrl = 'https://biacrm.com';
+      console.log('Facebook callback - Forçando uso de https://biacrm.com (host não é localhost)');
+    } else if (!frontendUrl) {
+      // Apenas se for localhost E não houver variáveis definidas, usar localhost:5173
+      frontendUrl = 'http://localhost:5173';
+      console.log('Facebook callback - Usando localhost:5173 (desenvolvimento local)');
     }
+    
+    // Garantir que não há trailing slash e remover porta se for padrão
+    frontendUrl = frontendUrl.replace(/\/$/, ''); // Remove trailing slash
+    frontendUrl = frontendUrl.replace(/:443$/, ''); // Remove porta 443 padrão HTTPS
+    frontendUrl = frontendUrl.replace(/:80$/, ''); // Remove porta 80 padrão HTTP
+    
+    // Log final da URL que será usada
+    console.log('Facebook callback - URL final de redirecionamento:', frontendUrl);
 
     // Exchange code for access token
     let tokenResponse;
@@ -318,9 +411,10 @@ router.get('/callback', async (req, res) => {
         }
       );
     } catch (tokenError: any) {
-      console.error('Facebook token exchange error:', tokenError.response?.data || tokenError.message);
+      const tokenErrorData = tokenError.response && tokenError.response.data;
+      console.error('Facebook token exchange error:', tokenErrorData || tokenError.message);
       
-      const fbError = tokenError.response?.data?.error;
+      const fbError = tokenErrorData && tokenErrorData.error;
       let errorMessage = 'Autenticação falhou. ';
       
       // Verificar tipos específicos de erro do Facebook
@@ -368,9 +462,10 @@ router.get('/callback', async (req, res) => {
         }
       );
     } catch (pagesError: any) {
-      console.error('Facebook pages fetch error:', pagesError.response?.data || pagesError.message);
+      const pagesErrorData = pagesError.response && pagesError.response.data;
+      console.error('Facebook pages fetch error:', pagesErrorData || pagesError.message);
       
-      const fbError = pagesError.response?.data?.error;
+      const fbError = pagesErrorData && pagesErrorData.error;
       let errorMessage = 'Erro ao validar acesso. ';
       
       // Verificar se é erro de autenticação
@@ -398,8 +493,8 @@ router.get('/callback', async (req, res) => {
     // Log para debug
     console.log('Facebook pages response:', {
       hasData: !!pagesResponse.data.data,
-      pagesCount: pages?.length || 0,
-      pages: pages?.map((p: any) => ({ id: p.id, name: p.name })) || []
+      pagesCount: pages && pages.length ? pages.length : 0,
+      pages: pages && pages.length ? pages.map((p: any) => ({ id: p.id, name: p.name })) : []
     });
     
     // Se não houver páginas, ainda permitir continuar mas avisar o usuário
@@ -420,18 +515,29 @@ router.get('/callback', async (req, res) => {
   } catch (error: any) {
     console.error('Facebook callback error:', error);
     
-    // Detectar URL do frontend automaticamente
-    let frontendUrl = process.env.FRONTEND_URL;
-    if (!frontendUrl) {
-      const protocol = req.protocol || (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || 'http';
-      const host = req.get('host') || req.headers.host || 'localhost:3000';
-      
-      if (host.includes('localhost') || host.includes('127.0.0.1')) {
-        frontendUrl = 'http://localhost:5173';
-      } else {
-        frontendUrl = `https://biacrm.com`;
-      }
+    // Detectar host da requisição primeiro - CRÍTICO para determinar URL correta
+    const host = req.get('host') || req.headers.host || 'localhost:3000';
+    const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1');
+    
+    // Usar FRONTEND_URL ou CORS_ORIGIN do .env
+    let frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN;
+    
+    // IMPORTANTE: Se não for localhost, SEMPRE usar biacrm.com
+    if (!isLocalhost) {
+      frontendUrl = 'https://biacrm.com';
+      console.log('Facebook callback error - Forçando uso de https://biacrm.com (host não é localhost)');
+    } else if (!frontendUrl) {
+      // Apenas se for localhost E não houver variáveis definidas, usar localhost:5173
+      frontendUrl = 'http://localhost:5173';
     }
+    
+    // Garantir que não há trailing slash e remover porta se for padrão
+    frontendUrl = frontendUrl.replace(/\/$/, ''); // Remove trailing slash
+    frontendUrl = frontendUrl.replace(/:443$/, ''); // Remove porta 443 padrão HTTPS
+    frontendUrl = frontendUrl.replace(/:80$/, ''); // Remove porta 80 padrão HTTP
+    
+    // Log final da URL que será usada
+    console.log('Facebook callback error - URL final de redirecionamento:', frontendUrl);
     
     const errorMessage = error.message || 'Erro ao processar autorização do Facebook. Por favor, verifique seu login e senha e tente novamente.';
     return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent(errorMessage)}`);
