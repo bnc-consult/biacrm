@@ -43,10 +43,13 @@ router.post('/connect-simple', authenticate, async (req: AuthRequest, res) => {
     const state = crypto.randomBytes(32).toString('hex');
     const stateWithUserId = `${state}_${userId}_${encodeURIComponent(instagram_username)}`;
 
-    // Instagram Graph API: Tentando sem permissões específicas primeiro
-    // O erro "supported permission" indica que o App não tem permissões básicas disponíveis
-    // Vamos tentar sem scope primeiro, e se necessário, o Facebook pode solicitar permissões básicas automaticamente
-    const scopes: string = ''; // Vazio - deixa o Facebook decidir permissões básicas
+    // Instagram Graph API: Usar as mesmas permissões básicas do Facebook
+    // O Instagram Business API usa o mesmo Facebook App, então precisa das mesmas permissões
+    // Permissões básicas que funcionam sem revisão do Facebook
+    const scopes: string = [
+      'public_profile',      // Perfil público do usuário (sempre válida)
+      'pages_show_list'       // Listar páginas do Facebook (necessária para Instagram Business)
+    ].join(',');
 
     // Construir URL OAuth - só adiciona scope se não estiver vazio
     let authUrl = `https://www.facebook.com/v18.0/dialog/oauth?` +
@@ -108,8 +111,16 @@ router.post('/connect', authenticate, async (req: AuthRequest, res) => {
       return res.status(400).json({ message: 'Título é obrigatório' });
     }
 
-    if (!access_token || !instagram_account_id) {
-      return res.status(400).json({ message: 'Access token e Instagram Account ID são obrigatórios' });
+    if (!access_token) {
+      return res.status(400).json({ message: 'Access token é obrigatório' });
+    }
+
+    // Para contas pessoais, podemos usar um ID temporário baseado no username
+    // Se não forneceu instagram_account_id, criar um baseado no username
+    const finalInstagramAccountId = instagram_account_id || (instagram_username ? `personal_${instagram_username}_${Date.now()}` : null);
+    
+    if (!finalInstagramAccountId) {
+      return res.status(400).json({ message: 'Instagram Account ID ou Username são obrigatórios' });
     }
 
     // Check if integration already exists for this user and account
@@ -196,10 +207,13 @@ router.get('/oauth/url', authenticate, async (req: AuthRequest, res) => {
     // Store state in session/database for verification
     const stateWithUserId = `${state}_${userId}`;
 
-    // Instagram Graph API: Tentando sem permissões específicas primeiro
-    // O erro "supported permission" indica que o App não tem permissões básicas disponíveis
-    // Vamos tentar sem scope primeiro, e se necessário, o Facebook pode solicitar permissões básicas automaticamente
-    const scopes: string = ''; // Vazio - deixa o Facebook decidir permissões básicas
+    // Instagram Graph API: Usar as mesmas permissões básicas do Facebook
+    // O Instagram Business API usa o mesmo Facebook App, então precisa das mesmas permissões
+    // Permissões básicas que funcionam sem revisão do Facebook
+    const scopes: string = [
+      'public_profile',      // Perfil público do usuário (sempre válida)
+      'pages_show_list'       // Listar páginas do Facebook (necessária para Instagram Business)
+    ].join(',');
 
     // Construir URL OAuth - só adiciona scope se não estiver vazio
     let authUrl = `https://www.facebook.com/v18.0/dialog/oauth?` +
@@ -248,10 +262,60 @@ router.get('/oauth/url', authenticate, async (req: AuthRequest, res) => {
 // Instagram OAuth Callback
 router.get('/callback', async (req, res) => {
   try {
-    const { code, state } = req.query;
+    const { code, state, error, error_reason, error_description } = req.query;
 
+    // Detectar frontend URL (mesma lógica do Facebook callback)
+    let frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN;
+    
+    if (!frontendUrl) {
+      const forwardedProto = req.headers['x-forwarded-proto'] as string;
+      const protocol = req.protocol || (forwardedProto ? forwardedProto.split(',')[0] : null) || 'http';
+      const host = req.get('host') || req.headers.host || 'localhost:3000';
+      
+      const isProduction = process.env.NODE_ENV === 'production';
+      const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1');
+      
+      if (isProduction || !isLocalhost) {
+        frontendUrl = 'https://biacrm.com';
+      } else {
+        frontendUrl = 'http://localhost:5173';
+      }
+    }
+    
+    // Limpar URL
+    frontendUrl = frontendUrl.replace(/\/$/, '').replace(/:443$/, '').replace(/:80$/, '');
+
+    // Verificar se o Facebook retornou um erro (ex: usuário cancelou, domínio não autorizado, etc.)
+    if (error || error_reason) {
+      console.error('Instagram OAuth error:', { error, error_reason, error_description });
+      
+      let errorMessage = 'Autenticação falhou. ';
+      
+      const errorDescriptionStr = typeof error_description === 'string' ? error_description.toLowerCase() : '';
+      
+      if (errorDescriptionStr.includes('domain') || errorDescriptionStr.includes('domínio')) {
+        errorMessage += 'O domínio não está configurado no Facebook App. Verifique se "biacrm.com" está em "Domínios do aplicativo" e se a URL de callback está em "URIs de redirecionamento OAuth válidos".';
+      } else if (errorDescriptionStr.includes('redirect_uri') || errorDescriptionStr.includes('redirect')) {
+        errorMessage += 'A URL de redirecionamento não está configurada corretamente. Verifique se "https://biacrm.com/api/integrations/instagram/callback" está em "URIs de redirecionamento OAuth válidos".';
+      } else if (error === 'access_denied' || error_reason === 'user_denied') {
+        errorMessage += 'Você cancelou a autorização.';
+      } else if (error_description) {
+        errorMessage += String(error_description);
+      } else if (error_reason) {
+        errorMessage += String(error_reason);
+      } else {
+        errorMessage += 'Erro desconhecido durante a autorização.';
+      }
+      
+      console.log('Instagram callback - Redirecionando com erro:', errorMessage);
+      return res.redirect(`${frontendUrl}/entrada-saida?instagram_error=${encodeURIComponent(errorMessage)}`);
+    }
+
+    // Verificar se o código foi fornecido
     if (!code) {
-      return res.status(400).json({ message: 'Código de autorização não fornecido' });
+      console.error('Instagram callback - Código não fornecido. Query params:', req.query);
+      const errorMessage = 'Código de autorização não fornecido. Verifique se a URL de callback está configurada corretamente no Facebook App.';
+      return res.redirect(`${frontendUrl}/entrada-saida?instagram_error=${encodeURIComponent(errorMessage)}`);
     }
 
     // Extract userId and username from state
@@ -351,36 +415,55 @@ router.get('/callback', async (req, res) => {
       }
     }
 
-    // Se não encontrou contas Instagram, ainda assim retornar o token para o usuário poder tentar novamente
+    // Se não encontrou contas Instagram Business, permitir usar conta pessoal
     if (instagramAccounts.length === 0) {
-      console.warn('Nenhuma conta Instagram Business encontrada. Verifique se a página do Facebook está conectada a uma conta Instagram Business.');
+      console.warn('Nenhuma conta Instagram Business encontrada. Permitindo integração com conta pessoal.');
+      
+      // Se temos username informado no fluxo simplificado, criar integração pessoal
+      if (instagramUsername && userId) {
+        // Criar uma integração usando o token do usuário diretamente
+        // Para contas pessoais, usamos o próprio token do usuário
+        instagramAccounts.push({
+          id: `personal_${userId}_${Date.now()}`, // ID temporário para contas pessoais
+          username: instagramUsername,
+          name: instagramUsername,
+          page_id: null,
+          page_name: 'Conta Pessoal',
+          page_access_token: access_token, // Usar token do usuário diretamente
+          is_personal: true // Flag para identificar conta pessoal
+        });
+      }
     }
 
-    // Se for fluxo simplificado e encontrou contas, criar integração automaticamente
+    // Se for fluxo simplificado e encontrou contas (Business ou Pessoal), criar integração automaticamente
     if (isSimplifiedFlow && instagramAccounts.length > 0 && userId) {
       try {
         const firstAccount = instagramAccounts[0];
         const tokenToUse = firstAccount.page_access_token || access_token;
         
         // Criar integração automaticamente
-        const title = `Instagram - ${firstAccount.username || instagramUsername || 'Conta'}`;
+        // Para contas pessoais, usar o username informado
+        const accountUsername = firstAccount.username || instagramUsername || 'Conta';
+        const accountType = firstAccount.is_personal ? 'Pessoal' : 'Business';
+        const title = `Instagram ${accountType} - ${accountUsername}`;
         
-        // Check if integration already exists
+        // Check if integration already exists (usar username como fallback para contas pessoais)
         const existing = await query(
-          'SELECT id FROM instagram_integrations WHERE user_id = ? AND instagram_account_id = ?',
-          [userId, firstAccount.id]
+          'SELECT id FROM instagram_integrations WHERE user_id = ? AND (instagram_account_id = ? OR (instagram_username = ? AND instagram_account_id LIKE ?))',
+          [userId, firstAccount.id, accountUsername, 'personal_%']
         );
 
         if (existing.rows.length > 0) {
           // Update existing
           await query(
             `UPDATE instagram_integrations 
-             SET title = ?, access_token = ?, instagram_username = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP, status = 'active'
+             SET title = ?, access_token = ?, instagram_account_id = ?, instagram_username = ?, expires_at = ?, updated_at = CURRENT_TIMESTAMP, status = 'active'
              WHERE id = ?`,
             [
               title,
               tokenToUse,
-              firstAccount.username || instagramUsername || null,
+              firstAccount.id,
+              accountUsername,
               expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null,
               existing.rows[0].id
             ]
@@ -396,7 +479,7 @@ router.get('/callback', async (req, res) => {
               title,
               tokenToUse,
               firstAccount.id,
-              firstAccount.username || instagramUsername || null,
+              accountUsername,
               expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null
             ]
           );
@@ -408,20 +491,41 @@ router.get('/callback', async (req, res) => {
     }
 
     // Redirect to frontend with tokens and Instagram accounts
-    const frontendUrl = process.env.FRONTEND_URL || 'https://biacrm.com';
+    // frontendUrl já foi detectado no início da função
     
-    if (instagramAccounts.length === 0) {
-      // Se não encontrou contas Instagram, ainda redireciona com o token para o usuário poder tentar novamente
-      // ou conectar manualmente usando o endpoint /accounts
-      const redirectUrl = `${frontendUrl}/entrada-saida?instagram_success=true&access_token=${access_token}&expires_in=${expires_in}&accounts=${encodeURIComponent(JSON.stringify([]))}&warning=${encodeURIComponent('Nenhuma conta Instagram Business encontrada. Verifique se sua página do Facebook está conectada a uma conta Instagram Business.')}&simplified=${isSimplifiedFlow ? 'true' : 'false'}`;
+    if (instagramAccounts.length === 0 && !instagramUsername) {
+      // Se não encontrou contas Instagram e não há username informado, redireciona com aviso
+      const redirectUrl = `${frontendUrl}/entrada-saida?instagram_success=true&access_token=${access_token}&expires_in=${expires_in}&accounts=${encodeURIComponent(JSON.stringify([]))}&warning=${encodeURIComponent('Nenhuma conta Instagram Business encontrada. Você pode conectar uma conta pessoal informando o username.')}&simplified=${isSimplifiedFlow ? 'true' : 'false'}`;
       res.redirect(redirectUrl);
     } else {
+      // Redireciona com as contas encontradas (Business ou Pessoal)
       const redirectUrl = `${frontendUrl}/entrada-saida?instagram_success=true&access_token=${access_token}&expires_in=${expires_in}&accounts=${encodeURIComponent(JSON.stringify(instagramAccounts))}&simplified=${isSimplifiedFlow ? 'true' : 'false'}&auto_connected=${isSimplifiedFlow && instagramAccounts.length > 0 ? 'true' : 'false'}`;
       res.redirect(redirectUrl);
     }
   } catch (error: any) {
     console.error('Instagram callback error:', error);
-    const frontendUrl = process.env.FRONTEND_URL || 'https://biacrm.com';
+    
+    // Detectar frontend URL (mesma lógica do início)
+    let frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN;
+    
+    if (!frontendUrl) {
+      const forwardedProto = req.headers['x-forwarded-proto'] as string;
+      const protocol = req.protocol || (forwardedProto ? forwardedProto.split(',')[0] : null) || 'http';
+      const host = req.get('host') || req.headers.host || 'localhost:3000';
+      
+      const isProduction = process.env.NODE_ENV === 'production';
+      const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1');
+      
+      if (isProduction || !isLocalhost) {
+        frontendUrl = 'https://biacrm.com';
+      } else {
+        frontendUrl = 'http://localhost:5173';
+      }
+    }
+    
+    // Limpar URL
+    frontendUrl = frontendUrl.replace(/\/$/, '').replace(/:443$/, '').replace(/:80$/, '');
+    
     const errorData = error.response && error.response.data;
     const errorMessage = (errorData && errorData.error && errorData.error.message) || error.message || 'Erro ao autorizar';
     res.redirect(`${frontendUrl}/entrada-saida?instagram_error=${encodeURIComponent(errorMessage)}`);

@@ -134,3 +134,8 @@ ls -lh /domains/biacrm.com/public_html/assets/*.js
 
 Se os arquivos têm data/hash novos, o frontend foi atualizado!
 
+
+
+
+
+

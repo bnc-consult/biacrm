@@ -44,3 +44,8 @@ Write-Host "4. Recarregar Nginx: systemctl reload nginx" -ForegroundColor White
 Write-Host ""
 
 
+
+
+
+
+

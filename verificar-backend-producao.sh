@@ -118,3 +118,8 @@ echo "3. Verifique se há erros: pm2 logs biacrm-backend --err"
 echo ""
 
 
+
+
+
+
+

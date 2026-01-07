@@ -45,3 +45,8 @@ FACEBOOK_APP_SECRET=seu_facebook_app_secret_aqui
 # ============================================
 
 
+
+
+
+
+

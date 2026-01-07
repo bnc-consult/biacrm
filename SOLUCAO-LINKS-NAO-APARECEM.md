@@ -180,3 +180,8 @@ bash /tmp/verificar-links-producao.sh > diagnostico-links.txt
 cat diagnostico-links.txt
 ```
 
+
+
+
+
+

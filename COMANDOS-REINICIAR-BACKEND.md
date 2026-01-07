@@ -145,3 +145,8 @@ cat /var/www/biacrm/api/.env | grep PORT
 - **Código compilado**: `/var/www/biacrm/api/dist/`
 - **Logs do PM2**: `~/.pm2/logs/`
 
+
+
+
+
+

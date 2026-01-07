@@ -88,3 +88,8 @@ curl -s http://localhost:3000/health || echo "❌ Backend não está respondendo
 
 
 
+
+
+
+
+

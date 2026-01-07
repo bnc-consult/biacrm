@@ -232,3 +232,8 @@ rm -f "$TEMP_FILE"
 
 echo "✅ Processo concluído!"
 
+
+
+
+
+

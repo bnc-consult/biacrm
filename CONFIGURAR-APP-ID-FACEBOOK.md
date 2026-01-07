@@ -47,3 +47,8 @@ Após configurar, reinicie o servidor backend para carregar as novas variáveis 
 O código já está preparado para validar essas credenciais e mostrar uma mensagem clara caso não estejam configuradas, orientando o usuário a entrar em contato com o administrador.
 
 
+
+
+
+
+

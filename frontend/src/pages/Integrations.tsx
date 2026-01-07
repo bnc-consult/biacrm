@@ -1160,10 +1160,11 @@ export default function Integrations() {
           }
           
           if (accounts && accounts.length > 0) {
-            // Usar a primeira conta Instagram disponível
+            // Usar a primeira conta Instagram disponível (Business ou Pessoal)
             const firstAccount = accounts[0];
             
             // Usar page_access_token se disponível (token específico da página)
+            // Para contas pessoais, usar o access_token diretamente
             const tokenToUse = firstAccount.page_access_token || accessToken;
             
             // Conectar a integração
@@ -1183,8 +1184,21 @@ export default function Integrations() {
             newParams.delete('warning');
             setSearchParams(newParams, { replace: true });
           } else {
-            // Não há contas Instagram, mas temos o token - usuário pode tentar buscar contas manualmente
-            alert('Autorização realizada com sucesso, mas nenhuma conta Instagram Business foi encontrada.\n\nVerifique se sua página do Facebook está conectada a uma conta Instagram Business.\n\nVocê pode tentar buscar contas manualmente usando o token recebido.');
+            // Não há contas Instagram Business encontradas
+            // Mas o usuário pode ter informado um username no fluxo simplificado
+            // Neste caso, vamos tentar conectar usando o token diretamente
+            // O backend já criou uma conta pessoal se havia username informado
+            
+            // Se há warning, mostrar mas não bloquear
+            if (warning) {
+              const warningMsg = decodeURIComponent(warning);
+              // Se o warning menciona que pode conectar conta pessoal, não mostrar como erro
+              if (!warningMsg.includes('pode conectar uma conta pessoal')) {
+                alert(warningMsg);
+              }
+            } else {
+              alert('Autorização realizada com sucesso!\n\nNenhuma conta Instagram Business foi encontrada, mas você pode conectar uma conta pessoal informando o username do Instagram.');
+            }
             
             // Limpar parâmetros da URL
             const newParams = new URLSearchParams(searchParams);

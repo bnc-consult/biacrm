@@ -97,3 +97,8 @@ echo "3. Se ainda houver erro, verifique os logs: tail -f /var/log/nginx/error.l
 echo ""
 
 
+
+
+
+
+

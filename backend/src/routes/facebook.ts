@@ -25,23 +25,45 @@ const validateFacebookConfig = () => {
 
 // Função para obter o URI de redirecionamento baseado na requisição
 const getRedirectUri = (req: express.Request): string => {
-  // Se estiver definido no .env, usa ele
+  // Se estiver definido no .env, usa ele (deve ser HTTPS em produção)
   if (process.env.FACEBOOK_REDIRECT_URI) {
-    return process.env.FACEBOOK_REDIRECT_URI;
+    // Garantir que em produção sempre use HTTPS
+    const redirectUri = process.env.FACEBOOK_REDIRECT_URI;
+    const host = req.get('host') || req.headers.host || 'localhost:3000';
+    const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1');
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    // Se não for localhost e não estiver usando HTTPS, forçar HTTPS
+    if (!isLocalhost && !redirectUri.startsWith('https://')) {
+      console.warn('Facebook redirect URI não usa HTTPS em produção, forçando HTTPS');
+      return redirectUri.replace(/^http:\/\//, 'https://');
+    }
+    
+    return redirectUri;
   }
   
   // Detecta automaticamente baseado na requisição
   const forwardedProto = req.headers['x-forwarded-proto'] as string;
-  const protocol = req.protocol || (forwardedProto ? forwardedProto.split(',')[0] : null) || 'http';
   const host = req.get('host') || req.headers.host || 'localhost:3000';
+  const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1');
+  const isProduction = process.env.NODE_ENV === 'production';
   
   // Se for localhost, usa http
-  if (host.includes('localhost') || host.includes('127.0.0.1')) {
+  if (isLocalhost) {
     return `http://${host}/api/integrations/facebook/callback`;
   }
   
-  // Caso contrário, assume produção com https
-  return `https://${host}/api/integrations/facebook/callback`;
+  // IMPORTANTE: Em produção, SEMPRE usar HTTPS (mesmo que o protocolo detectado seja HTTP)
+  // O Facebook requer HTTPS para conexões seguras
+  if (isProduction || !isLocalhost) {
+    // Forçar HTTPS removendo porta se necessário
+    const cleanHost = host.replace(/:80$/, '').replace(/:443$/, '');
+    return `https://${cleanHost}/api/integrations/facebook/callback`;
+  }
+  
+  // Fallback: detectar protocolo
+  const protocol = req.protocol || (forwardedProto ? forwardedProto.split(',')[0] : null) || 'https';
+  return `${protocol}://${host}/api/integrations/facebook/callback`;
 };
 
 // Create or update Facebook integration
@@ -315,41 +337,41 @@ router.get('/callback', async (req, res) => {
       return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent(errorMessage)}`);
     }
 
+    // Verificar se o código foi fornecido
     if (!code) {
-      // Usar FRONTEND_URL ou CORS_ORIGIN do .env, ou detectar automaticamente
+      console.error('Facebook callback - Código não fornecido. Query params:', req.query);
+      
+      // Detectar frontend URL (mesma lógica do início)
       let frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN;
       
       if (!frontendUrl) {
-        const forwardedProto = req.headers['x-forwarded-proto'] as string;
-        const protocol = req.protocol || (forwardedProto ? forwardedProto.split(',')[0] : null) || 'http';
         const host = req.get('host') || req.headers.host || 'localhost:3000';
-        
-        // Em produção (NODE_ENV=production) ou quando não for localhost, sempre usar biacrm.com
-        // Verificar também se o host da requisição não é localhost
-        const isProduction = process.env.NODE_ENV === 'production';
         const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1');
+        const isProduction = process.env.NODE_ENV === 'production';
         
         if (isProduction || !isLocalhost) {
-          // Em produção ou quando não for localhost, usar biacrm.com
           frontendUrl = 'https://biacrm.com';
         } else {
-          // Apenas em desenvolvimento local usar localhost
           frontendUrl = 'http://localhost:5173';
         }
-        
-        console.log('Facebook callback - Fallback URL detection:', {
-          NODE_ENV: process.env.NODE_ENV,
-          isProduction,
-          host,
-          isLocalhost,
-          selectedUrl: frontendUrl
-        });
       }
       
       // Limpar URL
       frontendUrl = frontendUrl.replace(/\/$/, '').replace(/:443$/, '').replace(/:80$/, '');
       
-      return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent('Código de autorização não fornecido. Por favor, verifique seu login e senha do Facebook e tente novamente.')}`);
+      // Mensagem de erro mais específica
+      let errorMessage = 'Código de autorização não fornecido. ';
+      
+      // Verificar se há parâmetros de erro que não foram capturados
+      if (req.query.error || req.query.error_reason) {
+        errorMessage += 'O Facebook retornou um erro durante a autorização. ';
+      } else {
+        errorMessage += 'A URL de callback pode não estar configurada corretamente no Facebook App. ';
+      }
+      
+      errorMessage += 'Por favor, tente novamente ou verifique as configurações do app.';
+      
+      return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent(errorMessage)}`);
     }
 
     // Extract userId from state

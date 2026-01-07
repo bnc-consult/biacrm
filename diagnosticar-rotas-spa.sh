@@ -161,3 +161,8 @@ fi
 echo "✅ Diagnóstico concluído!"
 echo ""
 
+
+
+
+
+

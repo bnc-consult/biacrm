@@ -148,3 +148,8 @@ echo "3. Logs do Nginx: tail -20 /var/log/nginx/error.log"
 echo ""
 
 
+
+
+
+
+

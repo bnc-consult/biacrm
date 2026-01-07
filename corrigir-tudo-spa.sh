@@ -248,3 +248,8 @@ echo ""
 # Limpar arquivo temporário
 rm -f "$TEMP_CONFIG"
 
+
+
+
+
+

@@ -128,3 +128,8 @@ Content-Type: text/html
 - Script de verificação: `corrigir-nginx-mime-types.sh`
 
 
+
+
+
+
+

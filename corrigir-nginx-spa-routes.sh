@@ -197,3 +197,8 @@ rm -f "$TEMP_CONFIG"
 
 echo "✅ Processo concluído!"
 
+
+
+
+
+

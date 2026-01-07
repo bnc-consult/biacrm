@@ -157,3 +157,8 @@ fi
 echo ""
 echo "✅ Verificação concluída!"
 
+
+
+
+
+
