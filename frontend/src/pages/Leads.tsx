@@ -30,7 +30,8 @@ import {
   FiRefreshCw,
   FiFileText,
   FiTrash2,
-  FiMenu
+  FiMenu,
+  FiEdit
 } from 'react-icons/fi';
 
 interface Lead {
@@ -79,6 +80,59 @@ const statusConfig: Record<string, { label: string; bgColor: string; textColor: 
   proposta: { label: 'Proposta', bgColor: 'bg-orange-100', textColor: 'text-orange-800' },
   venda_ganha: { label: 'Venda Ganha', bgColor: 'bg-green-100', textColor: 'text-green-800' },
   perdido: { label: 'Perdido', bgColor: 'bg-orange-100', textColor: 'text-orange-800' },
+};
+
+const statusOptions = [
+  { id: 'sem_atendimento', label: 'Sem Atendimento' },
+  { id: 'em_atendimento', label: 'Em Atendimento' },
+  { id: 'visita_concluida', label: 'Visita Concluída' },
+  { id: 'visita_agendada', label: 'Visita Agendada' },
+  { id: 'proposta', label: 'Proposta' },
+  { id: 'venda_ganha', label: 'Venda Ganha' },
+  { id: 'perdido', label: 'Perdido' },
+];
+
+const parseCustomData = (customData: any) => {
+  if (customData && typeof customData === 'string') {
+    try {
+      return JSON.parse(customData);
+    } catch (e) {
+      return {};
+    }
+  }
+  return customData || {};
+};
+
+const getBackendStatus = (displayStatus: string, customData?: any): { status: string; custom_data?: any } => {
+  const custom_data = customData || {};
+
+  switch (displayStatus) {
+    case 'sem_atendimento':
+      return { status: 'novo_lead' };
+    case 'em_atendimento':
+      return { status: 'em_contato' };
+    case 'visita_agendada':
+      return { status: 'proposta_enviada' };
+    case 'visita_concluida':
+      return {
+        status: 'fechamento',
+        custom_data: { ...custom_data, displayStatus: 'visita_concluida' }
+      };
+    case 'venda_ganha':
+      return {
+        status: 'fechamento',
+        custom_data: { ...custom_data, displayStatus: 'venda_ganha' }
+      };
+    case 'proposta':
+      return {
+        status: 'perdido',
+        custom_data: { ...custom_data, displayStatus: 'proposta' }
+      };
+    case 'perdido':
+      return { status: 'perdido' };
+    default:
+      return { status: displayStatus };
+  }
 };
 
 interface ImportTask {
@@ -160,6 +214,16 @@ export default function Leads() {
     notes: ''
   });
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Estados para o modal de edição de Lead
+  const [showEditLeadModal, setShowEditLeadModal] = useState(false);
+  const [editLeadId, setEditLeadId] = useState<number | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editStatus, setEditStatus] = useState('sem_atendimento');
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   
   // Configuração de colunas da tabela
   const defaultColumns = [
@@ -354,6 +418,7 @@ export default function Leads() {
       const response = await api.get('/leads');
       const leadsData = response.data.map((lead: any) => ({
         ...lead,
+        custom_data: parseCustomData(lead.custom_data),
         isNew: Math.random() > 0.3, // Simular alguns leads novos
       }));
       setLeads(leadsData);
@@ -361,6 +426,55 @@ export default function Leads() {
       console.error('Error fetching leads:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openEditLeadModal = (lead: Lead) => {
+    const displayStatus = getDisplayStatus(lead);
+    setEditLeadId(lead.id);
+    setEditName(lead.name || '');
+    setEditPhone(lead.phone || '');
+    setEditEmail(lead.email || '');
+    setEditStatus(displayStatus || 'sem_atendimento');
+    setEditError(null);
+    setShowEditLeadModal(true);
+  };
+
+  const handleSaveEditLead = async () => {
+    if (!editLeadId) return;
+    if (!editName.trim()) {
+      setEditError('Nome é obrigatório.');
+      return;
+    }
+
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const lead = leads.find(item => item.id === editLeadId);
+      const backendData = getBackendStatus(editStatus, parseCustomData(lead?.custom_data));
+      const payload: any = {
+        name: editName.trim(),
+        phone: editPhone.trim(),
+        email: editEmail.trim() || null,
+        status: backendData.status
+      };
+      if (backendData.custom_data) {
+        payload.custom_data = backendData.custom_data;
+      }
+
+      const response = await api.put(`/leads/${editLeadId}`, payload);
+      const updated = {
+        ...response.data,
+        custom_data: parseCustomData(response.data.custom_data),
+        isNew: lead?.isNew
+      };
+      setLeads(prev => prev.map(item => (item.id === editLeadId ? updated : item)));
+      setShowEditLeadModal(false);
+    } catch (error: any) {
+      console.error('Erro ao editar lead:', error);
+      setEditError(error.response?.data?.message || 'Erro ao salvar alterações.');
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -646,12 +760,22 @@ export default function Leads() {
                       if (column.id === 'action') {
                         return (
                           <td key={column.id} className="px-4 py-3">
-                            <button 
-                              onClick={() => navigate(`/leads/${lead.id}`)}
-                              className="text-blue-600 hover:text-blue-700"
-                            >
-                              <FiEye className="w-5 h-5" />
-                            </button>
+                            <div className="flex items-center gap-3">
+                              <button 
+                                onClick={() => navigate(`/leads/${lead.id}`)}
+                                className="text-blue-600 hover:text-blue-700"
+                                title="Visualizar"
+                              >
+                                <FiEye className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => openEditLeadModal(lead)}
+                                className="text-gray-600 hover:text-gray-800"
+                                title="Editar"
+                              >
+                                <FiEdit className="w-5 h-5" />
+                              </button>
+                            </div>
                           </td>
                         );
                       }
@@ -1101,6 +1225,121 @@ export default function Leads() {
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                 )}
                 {isSaving ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edição de Lead */}
+      {showEditLeadModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">Editar Lead</h2>
+              <button
+                onClick={() => {
+                  setShowEditLeadModal(false);
+                  setEditError(null);
+                }}
+                disabled={editSaving}
+                className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+              >
+                <FiX className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6">
+              {editError && (
+                <div className="mb-4 p-4 bg-red-50 text-red-800 rounded-lg border border-red-200">
+                  <span className="text-sm font-medium">{editError}</span>
+                </div>
+              )}
+
+              <div className="space-y-4">
+                {/* Nome */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Nome <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="Nome completo"
+                    disabled={editSaving}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+
+                {/* Telefone */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Telefone
+                  </label>
+                  <input
+                    type="tel"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    placeholder="(00) 00000-0000"
+                    disabled={editSaving}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+
+                {/* Email */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    placeholder="email@exemplo.com"
+                    disabled={editSaving}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+
+                {/* Status */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Status
+                  </label>
+                  <select
+                    value={editStatus}
+                    onChange={(e) => setEditStatus(e.target.value)}
+                    disabled={editSaving}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {statusOptions.map(status => (
+                      <option key={status.id} value={status.id}>
+                        {status.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-4 p-6 border-t border-gray-200">
+              <button
+                onClick={() => setShowEditLeadModal(false)}
+                disabled={editSaving}
+                className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveEditLead}
+                disabled={editSaving}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {editSaving ? 'Salvando...' : 'Salvar'}
               </button>
             </div>
           </div>

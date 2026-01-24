@@ -6,8 +6,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const crypto_1 = __importDefault(require("crypto"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const multer_1 = __importDefault(require("multer"));
 const auth_1 = require("../middleware/auth");
+const whatsapp_1 = require("../services/whatsapp");
 const router = express_1.default.Router();
+const upload = (0, multer_1.default)({
+    storage: multer_1.default.memoryStorage(),
+    limits: { fileSize: 2 * 1024 * 1024 * 1024 }
+});
 // Generate integration token and endpoint
 router.post('/generate-token', auth_1.authenticate, async (req, res) => {
     try {
@@ -54,6 +60,155 @@ router.post('/generate-token', auth_1.authenticate, async (req, res) => {
     catch (error) {
         console.error('Error generating integration token:', error);
         res.status(500).json({ message: error.message || 'Erro ao gerar token de integração' });
+    }
+});
+// Generate WhatsApp QR Code for sync
+router.get('/whatsapp/qr', auth_1.authenticate, async (req, res) => {
+    try {
+        const userId = (req.user && req.user.id) || 'anon';
+        const { status, qr } = await (0, whatsapp_1.getWhatsAppQr)(String(userId));
+        if (status === 'connected') {
+            return res.json({
+                success: true,
+                status: 'connected',
+                message: 'WhatsApp já conectado'
+            });
+        }
+        if (!qr) {
+            return res.json({
+                success: false,
+                status,
+                message: 'QR Code indisponível no momento. Tente novamente.'
+            });
+        }
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(qr)}`;
+        res.json({
+            success: true,
+            status,
+            qr: {
+                data: qr,
+                qrUrl,
+                expiresAt: new Date(Date.now() + 60 * 1000).toISOString()
+            }
+        });
+    }
+    catch (error) {
+        console.error('Error generating WhatsApp QR:', error);
+        res.status(500).json({ message: error.message || 'Erro ao gerar QR Code do WhatsApp' });
+    }
+});
+router.post('/whatsapp/disconnect', auth_1.authenticate, async (req, res) => {
+    try {
+        const userId = (req.user && req.user.id) || 'anon';
+        await (0, whatsapp_1.disconnectWhatsApp)(String(userId));
+        res.json({ success: true });
+    }
+    catch (error) {
+        console.error('Error disconnecting WhatsApp:', error);
+        res.status(500).json({ message: error.message || 'Erro ao desconectar WhatsApp' });
+    }
+});
+router.post('/whatsapp/send', auth_1.authenticate, async (req, res) => {
+    try {
+        const userId = (req.user && req.user.id) || 'anon';
+        const { phone, message } = req.body;
+        if (!phone || !message) {
+            return res.status(400).json({ message: 'Telefone e mensagem são obrigatórios' });
+        }
+        await (0, whatsapp_1.sendWhatsAppMessage)(String(userId), String(phone), String(message));
+        res.json({ success: true });
+    }
+    catch (error) {
+        console.error('Error sending WhatsApp message:', error);
+        res.status(500).json({ message: error.message || 'Erro ao enviar mensagem no WhatsApp' });
+    }
+});
+router.post('/whatsapp/send-media', auth_1.authenticate, upload.single('file'), async (req, res) => {
+    try {
+        const userId = (req.user && req.user.id) || 'anon';
+        const { phone, message } = req.body;
+        if (!phone) {
+            return res.status(400).json({ message: 'Telefone é obrigatório' });
+        }
+        if (!req.file) {
+            return res.status(400).json({ message: 'Arquivo não fornecido' });
+        }
+        await (0, whatsapp_1.sendWhatsAppMedia)(String(userId), String(phone), req.file, message ? String(message) : undefined);
+        res.json({ success: true });
+    }
+    catch (error) {
+        console.error('Error sending WhatsApp media:', error);
+        res.status(500).json({ message: error.message || 'Erro ao enviar mídia no WhatsApp' });
+    }
+});
+router.get('/whatsapp/messages', auth_1.authenticate, async (req, res) => {
+    try {
+        const userId = (req.user && req.user.id) || 'anon';
+        const phone = String(req.query.phone || '');
+        if (!phone) {
+            return res.status(400).json({ message: 'Telefone é obrigatório' });
+        }
+        const messages = await (0, whatsapp_1.getWhatsAppMessages)(String(userId), phone);
+        res.json({ success: true, messages });
+    }
+    catch (error) {
+        console.error('Error fetching WhatsApp messages:', error);
+        res.status(500).json({ message: error.message || 'Erro ao buscar mensagens do WhatsApp' });
+    }
+});
+router.get('/whatsapp/conversations', auth_1.authenticate, async (req, res) => {
+    try {
+        const userId = (req.user && req.user.id) || 'anon';
+        const conversations = await (0, whatsapp_1.getWhatsAppConversations)(String(userId));
+        res.json({ success: true, conversations });
+    }
+    catch (error) {
+        console.error('Error fetching WhatsApp conversations:', error);
+        res.status(500).json({ message: error.message || 'Erro ao buscar conversas do WhatsApp' });
+    }
+});
+router.post('/whatsapp/mark-read', auth_1.authenticate, async (req, res) => {
+    try {
+        const userId = (req.user && req.user.id) || 'anon';
+        const { phone } = req.body;
+        if (!phone) {
+            return res.status(400).json({ message: 'Telefone é obrigatório' });
+        }
+        await (0, whatsapp_1.markWhatsAppMessagesRead)(String(userId), String(phone));
+        res.json({ success: true });
+    }
+    catch (error) {
+        console.error('Error marking WhatsApp messages as read:', error);
+        res.status(500).json({ message: error.message || 'Erro ao marcar mensagens como lidas' });
+    }
+});
+router.get('/whatsapp/stream', async (req, res) => {
+    try {
+        const token = String(req.query.token || '');
+        if (!token) {
+            return res.status(401).json({ message: 'Token não fornecido' });
+        }
+        const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET || 'secret');
+        const userId = decoded?.id || decoded?.userId;
+        if (!userId) {
+            return res.status(401).json({ message: 'Token inválido' });
+        }
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive'
+        });
+        res.write('event: connected\ndata: {}\n\n');
+        const unsubscribe = (0, whatsapp_1.subscribeWhatsAppMessages)(String(userId), (event) => {
+            res.write(`event: message\ndata: ${JSON.stringify(event)}\n\n`);
+        });
+        req.on('close', () => {
+            unsubscribe();
+        });
+    }
+    catch (error) {
+        console.error('Error opening WhatsApp stream:', error);
+        res.status(401).json({ message: 'Token inválido' });
     }
 });
 // Webhook endpoint for external integrations

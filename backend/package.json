@@ -10,6 +10,7 @@
     "migrate": "tsx src/database/migrate.ts"
   },
   "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "axios": "^1.13.2",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^9.6.0",

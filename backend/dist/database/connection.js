@@ -62,17 +62,11 @@ else {
 }
 // Convert PostgreSQL placeholders ($1, $2) to SQLite placeholders (?)
 const convertPlaceholders = (sql) => {
-    if (db) {
-        // SQLite - convert $1, $2, etc to ?
-        let converted = sql;
-        let paramIndex = 1;
-        while (converted.includes(`$${paramIndex}`)) {
-            converted = converted.replace(new RegExp(`\\$${paramIndex}`, 'g'), '?');
-            paramIndex++;
-        }
-        return converted;
+    if (!db) {
+        return sql;
     }
-    return sql;
+    // SQLite - convert $1, $2, $10, etc to ?
+    return sql.replace(/\$\d+/g, '?');
 };
 // Export a unified query function
 const query = async (text, params) => {

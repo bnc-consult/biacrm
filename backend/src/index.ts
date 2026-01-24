@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'path';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { query, db, pool } from './database/connection';
@@ -141,6 +142,39 @@ const initializeDatabase = async () => {
       db.exec(`CREATE INDEX IF NOT EXISTS idx_instagram_integrations_user_id ON instagram_integrations(user_id)`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_instagram_integrations_account_id ON instagram_integrations(instagram_account_id)`);
 
+      // WhatsApp Messages table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS whatsapp_messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          wa_message_id TEXT,
+          phone TEXT NOT NULL,
+          text TEXT NOT NULL,
+          media_url TEXT,
+          media_type TEXT,
+          direction TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+          is_read INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_user_id ON whatsapp_messages(user_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone ON whatsapp_messages(phone)`);
+      try {
+        db.exec(`ALTER TABLE whatsapp_messages ADD COLUMN media_url TEXT`);
+      } catch (error) {
+        // Column already exists
+      }
+      try {
+        db.exec(`ALTER TABLE whatsapp_messages ADD COLUMN media_type TEXT`);
+      } catch (error) {
+        // Column already exists
+      }
+      try {
+        db.exec(`ALTER TABLE whatsapp_messages ADD COLUMN is_read INTEGER DEFAULT 0`);
+      } catch (error) {
+        // Column already exists
+      }
+
       console.log('✅ SQLite database initialized');
     } else if (pool) {
       // PostgreSQL - create tables if they don't exist
@@ -267,6 +301,35 @@ const initializeDatabase = async () => {
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_instagram_integrations_user_id ON instagram_integrations(user_id)`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_instagram_integrations_account_id ON instagram_integrations(instagram_account_id)`);
 
+      // WhatsApp Messages table
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS whatsapp_messages (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          wa_message_id VARCHAR(255),
+          phone VARCHAR(50) NOT NULL,
+          text TEXT NOT NULL,
+          media_url TEXT,
+          media_type TEXT,
+          direction VARCHAR(10) NOT NULL CHECK (direction IN ('in', 'out')),
+          is_read BOOLEAN DEFAULT FALSE,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_user_id ON whatsapp_messages(user_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone ON whatsapp_messages(phone)`);
+      try {
+        await pool.query(`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS media_url TEXT`);
+        await pool.query(`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS media_type TEXT`);
+      } catch (error) {
+        // Column already exists or table not created yet
+      }
+      try {
+        await pool.query(`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS is_read BOOLEAN DEFAULT FALSE`);
+      } catch (error) {
+        // Column already exists or table not created yet
+      }
+
       console.log('✅ PostgreSQL database initialized');
     }
   } catch (error) {
@@ -309,6 +372,7 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/media/whatsapp', express.static(path.join(process.cwd(), 'whatsapp_media')));
 
 // Health check
 app.get('/health', async (req, res) => {

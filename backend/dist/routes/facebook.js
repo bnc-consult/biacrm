@@ -208,7 +208,8 @@ router.get('/oauth/url', auth_1.authenticate, async (req, res) => {
         const redirectUri = getRedirectUri(req);
         // Usar apenas permissões válidas do Facebook
         // Permissões básicas que funcionam sem revisão do Facebook
-        // Nota: 'email' pode não estar disponível dependendo da configuração do app
+        // Nota: O token da página obtido de /me/accounts já inclui as permissões necessárias
+        // para acessar leadgen_forms se o usuário for admin da página
         const scopes = [
             'public_profile', // Perfil público do usuário (sempre válida)
             'pages_show_list' // Listar páginas do Facebook (válida e necessária)
@@ -400,10 +401,12 @@ router.get('/callback', async (req, res) => {
         // Get user's pages - validar token ao mesmo tempo
         let pagesResponse;
         try {
+            // IMPORTANTE: Solicitar o access_token da página explicitamente
+            // O token da página tem permissões para acessar leadgen_forms se o usuário for admin
             pagesResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/me/accounts`, {
                 params: {
                     access_token: access_token,
-                    fields: 'id,name,access_token'
+                    fields: 'id,name,access_token,tasks' // tasks mostra permissões da página
                 }
             });
         }
@@ -432,11 +435,34 @@ router.get('/callback', async (req, res) => {
             return res.redirect(`${frontendUrl}/entrada-saida?facebook_error=${encodeURIComponent(errorMessage)}`);
         }
         const pages = pagesResponse.data.data || [];
-        // Log para debug
+        // Log para debug - verificar se os tokens da página estão sendo retornados
         console.log('Facebook pages response:', {
             hasData: !!pagesResponse.data.data,
             pagesCount: pages && pages.length ? pages.length : 0,
-            pages: pages && pages.length ? pages.map((p) => ({ id: p.id, name: p.name })) : []
+            userTokenPreview: access_token ? access_token.substring(0, 20) + '...' : 'null',
+            pages: pages && pages.length ? pages.map((p) => {
+                const pageTokenPreview = p.access_token ? p.access_token.substring(0, 20) + '...' : 'null';
+                const isDifferentFromUserToken = p.access_token && access_token ? p.access_token !== access_token : false;
+                return {
+                    id: p.id,
+                    name: p.name,
+                    hasAccessToken: !!p.access_token,
+                    accessTokenLength: p.access_token ? p.access_token.length : 0,
+                    accessTokenPreview: pageTokenPreview,
+                    isDifferentFromUserToken: isDifferentFromUserToken,
+                    tasks: p.tasks || []
+                };
+            }) : []
+        });
+        // IMPORTANTE: Garantir que cada página tenha seu access_token
+        // O token da página é necessário para acessar leadgen_forms
+        pages.forEach((page) => {
+            if (!page.access_token) {
+                console.warn(`⚠️ Página ${page.id} (${page.name}) não tem access_token!`);
+            }
+            else if (page.access_token === access_token) {
+                console.warn(`⚠️ Página ${page.id} (${page.name}) tem o mesmo token do usuário! Isso pode causar problemas de permissão.`);
+            }
         });
         // Se não houver páginas, ainda permitir continuar mas avisar o usuário
         // O usuário pode criar uma integração mesmo sem páginas (para uso futuro)
@@ -492,6 +518,323 @@ router.get('/list', auth_1.authenticate, async (req, res) => {
     catch (error) {
         console.error('Facebook list error:', error);
         res.status(500).json({ message: error.message || 'Erro ao listar integrações Facebook' });
+    }
+});
+// IMPORTANTE: Rotas específicas DEVEM vir ANTES das rotas com parâmetros
+// Caso contrário, Express interpreta "/forms" como "/:integrationId" com integrationId="forms"
+// Get Facebook pages for user
+router.get('/pages', auth_1.authenticate, async (req, res) => {
+    try {
+        const { access_token } = req.query;
+        if (!access_token) {
+            return res.status(400).json({ message: 'Access token é obrigatório' });
+        }
+        // Get user's pages
+        // IMPORTANTE: Solicitar o access_token da página explicitamente
+        // O token da página tem permissões para acessar leadgen_forms se o usuário for admin
+        const pagesResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/me/accounts`, {
+            params: {
+                access_token: access_token,
+                fields: 'id,name,access_token,category,picture,tasks' // tasks mostra permissões da página
+            }
+        });
+        // Log para verificar se os tokens da página estão sendo retornados
+        const pages = pagesResponse.data.data || [];
+        console.log('📄 Páginas obtidas com tokens:', {
+            count: pages.length,
+            pages: pages.map((p) => ({
+                id: p.id,
+                name: p.name,
+                hasAccessToken: !!p.access_token,
+                accessTokenLength: p.access_token ? p.access_token.length : 0,
+                tasks: p.tasks || []
+            }))
+        });
+        res.json({
+            success: true,
+            pages: pagesResponse.data.data || []
+        });
+    }
+    catch (error) {
+        console.error('Facebook pages error:', error);
+        res.status(500).json({
+            message: error.message || 'Erro ao buscar páginas',
+            error: (error.response && error.response.data) || error.message
+        });
+    }
+});
+// Get Facebook forms for a page
+router.get('/forms', auth_1.authenticate, async (req, res) => {
+    try {
+        const { access_token, page_id, user_access_token } = req.query;
+        console.log('🔍 Buscando formulários do Facebook:', {
+            page_id: page_id,
+            hasAccessToken: !!access_token,
+            hasUserAccessToken: !!user_access_token,
+            accessTokenLength: access_token ? access_token.length : 0
+        });
+        if (!page_id) {
+            return res.status(400).json({ message: 'Page ID é obrigatório' });
+        }
+        // Estratégia: Tentar com o token fornecido primeiro
+        // Se falhar com erro de permissão, tentar obter o token da página usando o token do usuário
+        let tokenToUse = access_token;
+        let tokenSource = 'provided';
+        // Se o token fornecido falhar com erro de permissão, tentar obter o token da página
+        if (!tokenToUse && user_access_token) {
+            console.log('⚠️ Token da página não fornecido. Tentando obter do token do usuário...');
+            try {
+                const pagesResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/me/accounts`, {
+                    params: {
+                        access_token: user_access_token,
+                        fields: 'id,name,access_token'
+                    }
+                });
+                const pages = pagesResponse.data.data || [];
+                const page = pages.find((p) => p.id === page_id);
+                if (page && page.access_token) {
+                    tokenToUse = page.access_token;
+                    tokenSource = 'fetched_from_user_token';
+                    console.log('✅ Token da página obtido:', {
+                        page_id: page.id,
+                        page_name: page.name,
+                        token_length: tokenToUse.length
+                    });
+                }
+                else {
+                    return res.status(400).json({
+                        message: 'Token da página não encontrado. Certifique-se de que você é administrador da página.'
+                    });
+                }
+            }
+            catch (pagesError) {
+                console.error('❌ Erro ao buscar token da página:', pagesError.message);
+                return res.status(400).json({
+                    message: 'Não foi possível obter o token da página. Certifique-se de que você é administrador da página.'
+                });
+            }
+        }
+        if (!tokenToUse) {
+            return res.status(400).json({ message: 'Access token é obrigatório' });
+        }
+        console.log('🔑 Token sendo usado:', {
+            source: tokenSource,
+            page_id: page_id,
+            token_length: tokenToUse.length,
+            token_preview: tokenToUse.substring(0, 20) + '...'
+        });
+        // Tentar buscar formulários
+        let formsResponse;
+        try {
+            formsResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/${page_id}/leadgen_forms`, {
+                params: {
+                    access_token: tokenToUse,
+                    fields: 'id,name,status,leads_count,created_time'
+                }
+            });
+        }
+        catch (formsError) {
+            const formsErrorData = formsError.response && formsError.response.data ? formsError.response.data : null;
+            const formsErrorObj = formsErrorData && formsErrorData.error ? formsErrorData.error : null;
+            const errorCode = formsErrorObj && formsErrorObj.code ? formsErrorObj.code : null;
+            const errorMessage = formsErrorObj && formsErrorObj.message ? formsErrorObj.message : formsError.message;
+            console.error('❌ Erro ao buscar leadgen_forms:', {
+                message: errorMessage,
+                code: errorCode,
+                page_id: page_id,
+                token_source: tokenSource,
+                fullError: formsErrorData
+            });
+            // Se o erro for de permissão e temos o token do usuário, tentar obter o token da página novamente
+            if ((errorCode === 200 || errorCode === 100) && user_access_token && tokenSource === 'provided') {
+                console.log('⚠️ Erro de permissão detectado. Tentando obter token da página usando token do usuário...');
+                try {
+                    const pagesResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/me/accounts`, {
+                        params: {
+                            access_token: user_access_token,
+                            fields: 'id,name,access_token'
+                        }
+                    });
+                    const pages = pagesResponse.data.data || [];
+                    const page = pages.find((p) => p.id === page_id);
+                    console.log('🔍 Página encontrada para retry:', {
+                        page_id: page_id,
+                        found: !!page,
+                        hasAccessToken: page && page.access_token ? true : false,
+                        accessTokenLength: page && page.access_token ? page.access_token.length : 0,
+                        accessTokenPreview: page && page.access_token ? page.access_token.substring(0, 20) + '...' : 'null',
+                        userTokenPreview: user_access_token ? user_access_token.substring(0, 20) + '...' : 'null',
+                        areTokensDifferent: page && page.access_token && user_access_token ? page.access_token !== user_access_token : false
+                    });
+                    if (page && page.access_token) {
+                        // Verificar se o token da página é diferente do token do usuário
+                        const isDifferentToken = page.access_token !== user_access_token;
+                        console.log('🔑 Comparação de tokens no retry:', {
+                            pageTokenLength: page.access_token.length,
+                            userTokenLength: user_access_token.length,
+                            areDifferent: isDifferentToken,
+                            pageTokenPreview: page.access_token.substring(0, 20) + '...',
+                            userTokenPreview: user_access_token.substring(0, 20) + '...'
+                        });
+                        // Tentar verificar permissões do token usando debug_token
+                        try {
+                            const debugResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/debug_token`, {
+                                params: {
+                                    input_token: page.access_token,
+                                    access_token: FACEBOOK_APP_ID + '|' + FACEBOOK_APP_SECRET
+                                }
+                            });
+                            const debugData = debugResponse.data && debugResponse.data.data ? debugResponse.data.data : null;
+                            const grantedScopes = debugData && debugData.scopes ? debugData.scopes : [];
+                            console.log('🔐 Permissões do token da página:', {
+                                scopes: grantedScopes,
+                                hasPagesManageAds: grantedScopes.includes('pages_manage_ads'),
+                                hasLeadsRetrieval: grantedScopes.includes('leads_retrieval'),
+                                hasPagesReadEngagement: grantedScopes.includes('pages_read_engagement')
+                            });
+                        }
+                        catch (debugError) {
+                            console.warn('⚠️ Não foi possível verificar permissões do token:', debugError.message);
+                        }
+                        console.log('✅ Tentando novamente com token da página obtido...');
+                        // Tentar novamente com o token da página
+                        formsResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/${page_id}/leadgen_forms`, {
+                            params: {
+                                access_token: page.access_token,
+                                fields: 'id,name,status,leads_count,created_time'
+                            }
+                        });
+                    }
+                    else {
+                        throw new Error('Token da página não encontrado');
+                    }
+                }
+                catch (retryError) {
+                    // Se ainda falhar, retornar erro original
+                    throw formsError;
+                }
+            }
+            else {
+                // Se não temos token do usuário ou já tentamos, retornar erro
+                throw formsError;
+            }
+        }
+        const forms = formsResponse.data.data || [];
+        console.log('✅ Formulários encontrados:', {
+            count: forms.length,
+            forms: forms.map((f) => ({ id: f.id, name: f.name }))
+        });
+        res.json({
+            success: true,
+            forms: forms
+        });
+    }
+    catch (error) {
+        const errorResponse = error.response || {};
+        const errorData = errorResponse.data || {};
+        const errorObj = errorData.error || {};
+        const errorMessage = errorObj.message || error.message || 'Erro ao buscar formulários';
+        const errorCode = errorObj.code;
+        const errorType = errorObj.type;
+        console.error('❌ Facebook forms error:', {
+            message: errorMessage,
+            code: errorCode,
+            type: errorType,
+            page_id: req.query.page_id,
+            fullError: errorData
+        });
+        // Retornar erro detalhado para o frontend
+        res.status(errorResponse.status || 500).json({
+            success: false,
+            message: errorMessage,
+            error: {
+                code: errorCode,
+                type: errorType,
+                message: errorMessage,
+                full: errorData
+            },
+            forms: []
+        });
+    }
+});
+// Get Facebook users/admins for a page
+router.get('/users', auth_1.authenticate, async (req, res) => {
+    try {
+        const { access_token, page_id } = req.query;
+        if (!access_token) {
+            return res.status(400).json({ message: 'Access token é obrigatório' });
+        }
+        if (!page_id) {
+            return res.status(400).json({ message: 'Page ID é obrigatório' });
+        }
+        // Get users/admins for the page
+        try {
+            const usersResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/${page_id}/roles`, {
+                params: {
+                    access_token: access_token
+                }
+            });
+            const roles = usersResponse.data.data || [];
+            const users = [];
+            // Fetch user details for each role
+            for (const role of roles) {
+                try {
+                    const userResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/${role.user}`, {
+                        params: {
+                            access_token: access_token,
+                            fields: 'id,name,email'
+                        }
+                    });
+                    users.push({
+                        ...userResponse.data,
+                        role: role.role
+                    });
+                }
+                catch (userError) {
+                    // Se não conseguir buscar detalhes, adicionar apenas o ID
+                    users.push({
+                        id: role.user,
+                        role: role.role
+                    });
+                }
+            }
+            // Remove duplicates
+            const uniqueUsers = users.filter((user, index, self) => index === self.findIndex((u) => u.id === user.id));
+            res.json({
+                success: true,
+                users: uniqueUsers
+            });
+        }
+        catch (rolesError) {
+            // Se não conseguir buscar roles, tentar buscar informações do usuário atual
+            console.warn('Erro ao buscar roles da página, tentando buscar informações do usuário:', rolesError.message);
+            try {
+                const meResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/me`, {
+                    params: {
+                        access_token: access_token,
+                        fields: 'id,name,email'
+                    }
+                });
+                res.json({
+                    success: true,
+                    users: [meResponse.data]
+                });
+            }
+            catch (meError) {
+                console.error('Facebook users error:', meError);
+                res.status(500).json({
+                    message: meError.message || 'Erro ao buscar usuários',
+                    error: (meError.response && meError.response.data) || meError.message
+                });
+            }
+        }
+    }
+    catch (error) {
+        console.error('Facebook users error:', error);
+        res.status(500).json({
+            message: error.message || 'Erro ao buscar usuários',
+            error: (error.response && error.response.data) || error.message
+        });
     }
 });
 // Get Facebook integration details
@@ -800,33 +1143,6 @@ router.get('/:integrationId/leads', auth_1.authenticate, async (req, res) => {
     catch (error) {
         console.error('Facebook leads error:', error);
         res.status(500).json({ message: error.message || 'Erro ao buscar leads' });
-    }
-});
-// Get Facebook pages for user
-router.get('/pages', auth_1.authenticate, async (req, res) => {
-    try {
-        const { access_token } = req.query;
-        if (!access_token) {
-            return res.status(400).json({ message: 'Access token é obrigatório' });
-        }
-        // Get user's pages
-        const pagesResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/me/accounts`, {
-            params: {
-                access_token: access_token,
-                fields: 'id,name,access_token,category,picture'
-            }
-        });
-        res.json({
-            success: true,
-            pages: pagesResponse.data.data || []
-        });
-    }
-    catch (error) {
-        console.error('Facebook pages error:', error);
-        res.status(500).json({
-            message: error.message || 'Erro ao buscar páginas',
-            error: (error.response && error.response.data) || error.message
-        });
     }
 });
 exports.default = router;

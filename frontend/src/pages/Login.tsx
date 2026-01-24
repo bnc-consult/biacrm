@@ -120,22 +120,29 @@ export default function Login() {
         </form>
         <div className="mt-6 pt-6 border-t border-gray-200">
           <div className="flex flex-wrap justify-center gap-4 text-xs text-gray-500">
-            <Link 
-              to="/terms-of-service" 
+            <Link
+              to="/user-data-deletion"
+              className="hover:text-primary-600 transition-colors"
+            >
+              Exclusão de Dados do Usuário
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link
+              to="/terms-of-service"
               className="hover:text-primary-600 transition-colors"
             >
               Termos de Serviço
             </Link>
             <span className="text-gray-300">•</span>
-            <Link 
-              to="/privacy-policy" 
+            <Link
+              to="/privacy-policy"
               className="hover:text-primary-600 transition-colors"
             >
               Política de Privacidade
             </Link>
             <span className="text-gray-300">•</span>
-            <Link 
-              to="/bncconsultoria" 
+            <Link
+              to="/bncconsultoria"
               className="hover:text-primary-600 transition-colors"
             >
               BNC Consultoria em IA

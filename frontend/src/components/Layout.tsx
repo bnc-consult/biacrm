@@ -22,7 +22,8 @@ import {
   FiRefreshCw,
   FiInfo,
   FiLogOut,
-  FiUser
+  FiUser,
+  FiMessageCircle
 } from 'react-icons/fi';
 
 interface Notification {
@@ -30,6 +31,15 @@ interface Notification {
   leadName: string;
   date: string;
   time: string;
+}
+
+interface Conversation {
+  phone: string;
+  leadId?: number | null;
+  leadName?: string | null;
+  lastMessage: string;
+  lastAt: string;
+  unreadCount: number;
 }
 
 export default function Layout() {
@@ -44,6 +54,11 @@ export default function Layout() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [muted, setMuted] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [whatsappIntegrationActive, setWhatsappIntegrationActive] = useState(false);
+  const [showConversationsModal, setShowConversationsModal] = useState(false);
+  const [activeConversationTab, setActiveConversationTab] = useState<'unread' | 'all'>('unread');
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
 
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
@@ -66,6 +81,41 @@ export default function Layout() {
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  const refreshWhatsAppIntegration = () => {
+    try {
+      const saved = localStorage.getItem('whatsappIntegrations');
+      if (!saved) {
+        setWhatsappIntegrationActive(false);
+        return;
+      }
+      const parsed = JSON.parse(saved);
+      const hasActive = Array.isArray(parsed) && parsed.some((integration: any) => integration.status === 'active');
+      setWhatsappIntegrationActive(hasActive);
+    } catch (e) {
+      setWhatsappIntegrationActive(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshWhatsAppIntegration();
+  }, []);
+
+  useEffect(() => {
+    if (!whatsappIntegrationActive) {
+      setConversations([]);
+      return;
+    }
+    fetchConversations();
+    const interval = setInterval(fetchConversations, 30000);
+    return () => clearInterval(interval);
+  }, [whatsappIntegrationActive]);
+
+  useEffect(() => {
+    if (showConversationsModal) {
+      fetchConversations();
+    }
+  }, [showConversationsModal]);
 
   // Fechar menu do usuário ao clicar fora
   useEffect(() => {
@@ -123,6 +173,50 @@ export default function Layout() {
     }
   };
 
+  const fetchConversations = async () => {
+    if (!whatsappIntegrationActive) {
+      setConversations([]);
+      setConversationsLoading(false);
+      return;
+    }
+    setConversationsLoading(true);
+    try {
+      const response = await api.get('/integrations/whatsapp/conversations');
+      setConversations(response.data?.conversations || []);
+    } catch (error) {
+      console.error('Error fetching conversations:', error);
+    } finally {
+      setConversationsLoading(false);
+    }
+  };
+
+  const formatConversationTime = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const diffMs = Date.now() - date.getTime();
+    const diffMinutes = Math.floor(diffMs / 60000);
+    if (diffMinutes < 1) return 'agora';
+    if (diffMinutes < 60) return `há ${diffMinutes} min`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `há ${diffHours} h`;
+    return date.toLocaleDateString('pt-BR');
+  };
+
+  const handleOpenConversation = async (conversation: Conversation) => {
+    try {
+      if (conversation.phone) {
+        await api.post('/integrations/whatsapp/mark-read', { phone: conversation.phone });
+      }
+    } catch (error) {
+      console.warn('Erro ao marcar conversa como lida:', error);
+    } finally {
+      setShowConversationsModal(false);
+      if (conversation.leadId) {
+        navigate(`/leads/${conversation.leadId}`);
+      }
+    }
+  };
+
   const handleClearNotifications = () => {
     if (window.confirm('Tem certeza que deseja limpar todas as notificações?')) {
       setNotifications([]);
@@ -147,8 +241,12 @@ export default function Layout() {
     { path: '/entrada-saida', icon: FiRepeat, label: 'Entrada & Saída' },
   ];
 
+  const totalUnreadConversations = conversations.reduce((sum, item) => sum + (item.unreadCount || 0), 0);
+  const unreadConversations = conversations.filter(item => item.unreadCount > 0);
+
   const menuItems = [
     { path: '/', icon: FiHome, label: 'Dashboard' },
+    { icon: FiMessageCircle, label: 'Conversas', onClick: () => { refreshWhatsAppIntegration(); setShowConversationsModal(true); } },
     { path: '/leads', icon: FiUsers, label: 'Leads', hasDropdown: true, subItems: leadsSubItems },
     { path: '/appointments', icon: FiCalendar, label: 'Agendamentos' },
     { icon: FiZap, label: 'Integrações', hasDropdown: true, subItems: integrationsSubItems },
@@ -220,6 +318,8 @@ export default function Layout() {
                       } else if (isIntegrationsMenu) {
                         setIntegrationsMenuOpen(!integrationsMenuOpen);
                       }
+                    } else if (item.onClick) {
+                      item.onClick();
                     } else if (item.path) {
                       navigate(item.path);
                     }
@@ -327,6 +427,13 @@ export default function Layout() {
             {sidebarOpen ? (
               <>
                 <div className="flex flex-wrap gap-2">
+                  <Link
+                    to="/user-data-deletion"
+                    className="hover:text-primary-600 transition-colors underline"
+                  >
+                    Exclusão de Dados do Usuário
+                  </Link>
+                  <span>•</span>
                   <Link 
                     to="/terms-of-service" 
                     className="hover:text-primary-600 transition-colors underline"
@@ -353,6 +460,13 @@ export default function Layout() {
               </>
             ) : (
               <div className="flex flex-col items-center gap-2">
+                <Link
+                  to="/user-data-deletion"
+                  className="hover:text-primary-600 transition-colors"
+                  title="Exclusão de Dados do Usuário"
+                >
+                  🗑️
+                </Link>
                 <Link 
                   to="/terms-of-service" 
                   className="hover:text-primary-600 transition-colors"
@@ -384,9 +498,8 @@ export default function Layout() {
       <main className="flex-1 flex flex-col overflow-hidden bg-white">
         {/* Header */}
         <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between flex-shrink-0">
-          {/* Left: Empty space */}
-          <div className="flex items-center space-x-4">
-          </div>
+          {/* Left: Actions */}
+          <div className="flex items-center space-x-4" />
 
           {/* Right: Icons and User */}
           <div className="flex items-center space-x-4">
@@ -476,6 +589,150 @@ export default function Layout() {
           </div>
         </footer>
       </main>
+
+      {/* Conversas Drawer */}
+      {showConversationsModal && (
+        <div
+          className="fixed inset-0 z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowConversationsModal(false);
+            }
+          }}
+        >
+          <div className="absolute inset-0 bg-black/40" />
+          <div
+            className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header do Modal */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold text-gray-900">Conversas</h2>
+                {totalUnreadConversations > 0 && (
+                  <span className="w-5 h-5 bg-red-500 rounded-full text-xs text-white flex items-center justify-center">
+                    {totalUnreadConversations > 99 ? '99+' : totalUnreadConversations}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={fetchConversations}
+                  className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Atualizar"
+                  disabled={!whatsappIntegrationActive}
+                >
+                  <FiRefreshCw className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => setShowConversationsModal(false)}
+                  className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <span className="text-xl">×</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex border-b border-gray-200">
+              <button
+                onClick={() => setActiveConversationTab('unread')}
+                className={`flex-1 px-4 py-3 text-sm font-medium relative ${
+                  activeConversationTab === 'unread'
+                    ? 'text-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                disabled={!whatsappIntegrationActive}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <span>Não lidas</span>
+                  {totalUnreadConversations > 0 && (
+                    <span className="w-5 h-5 bg-red-500 rounded-full text-xs text-white flex items-center justify-center">
+                      {totalUnreadConversations > 99 ? '99+' : totalUnreadConversations}
+                    </span>
+                  )}
+                </div>
+                {activeConversationTab === 'unread' && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600"></div>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveConversationTab('all')}
+                className={`flex-1 px-4 py-3 text-sm font-medium relative ${
+                  activeConversationTab === 'all'
+                    ? 'text-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                disabled={!whatsappIntegrationActive}
+              >
+                Todas
+                {activeConversationTab === 'all' && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600"></div>
+                )}
+              </button>
+            </div>
+
+            {/* Conteúdo */}
+            <div className="flex-1 overflow-y-auto p-4">
+              {!whatsappIntegrationActive ? (
+                <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                  <FiMessageCircle className="w-12 h-12 mb-4 opacity-50" />
+                  <p className="text-sm text-center">
+                    A integração com o WhatsApp não foi criada.
+                  </p>
+                </div>
+              ) : conversationsLoading ? (
+                <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+                  Carregando conversas...
+                </div>
+              ) : (
+                <>
+                  {(activeConversationTab === 'unread' ? unreadConversations : conversations).length > 0 ? (
+                    <div className="space-y-3">
+                      {(activeConversationTab === 'unread' ? unreadConversations : conversations).map((conversation) => (
+                        <button
+                          key={`${conversation.phone}-${conversation.lastAt}`}
+                          onClick={() => handleOpenConversation(conversation)}
+                          className="w-full bg-gray-50 rounded-lg p-4 flex items-start gap-3 text-left hover:bg-gray-100 transition-colors"
+                        >
+                          <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center text-green-600 flex-shrink-0">
+                            <FiMessageCircle className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <h3 className="text-sm font-semibold text-gray-900 truncate">
+                                {conversation.leadName || conversation.phone}
+                              </h3>
+                              <span className="text-xs text-gray-500 whitespace-nowrap">
+                                {formatConversationTime(conversation.lastAt)}
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-600 mt-1 line-clamp-2">
+                              {conversation.lastMessage || 'Sem mensagem'}
+                            </p>
+                          </div>
+                          {conversation.unreadCount > 0 && (
+                            <span className="w-6 h-6 bg-red-500 rounded-full text-xs text-white flex items-center justify-center flex-shrink-0">
+                              {conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                      <FiMessageCircle className="w-12 h-12 mb-4 opacity-50" />
+                      <p className="text-sm">
+                        {activeConversationTab === 'unread' ? 'Nenhuma conversa não lida' : 'Nenhuma conversa encontrada'}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de Notificações */}
       {showNotificationsModal && (

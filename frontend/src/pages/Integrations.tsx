@@ -42,6 +42,14 @@ interface InstagramIntegration {
   status: 'active' | 'inactive';
 }
 
+interface WhatsAppIntegration {
+  id: string;
+  title: string;
+  accountName: string;
+  connectedAt: string;
+  status: 'active' | 'inactive';
+}
+
 interface GoogleAdsIntegration {
   id: string;
   title: string;
@@ -263,6 +271,14 @@ export default function Integrations() {
   const [showFacebookAccountModal, setShowFacebookAccountModal] = useState(false);
   const [showFacebookPermissionsModal, setShowFacebookPermissionsModal] = useState(false);
   const [showFacebookLoginModal, setShowFacebookLoginModal] = useState(false);
+  const [showFacebookFormModal, setShowFacebookFormModal] = useState(false);
+  const [facebookForms, setFacebookForms] = useState<any[]>([]);
+  const [facebookPages, setFacebookPages] = useState<any[]>([]);
+  const [facebookFormsError, setFacebookFormsError] = useState<string>('');
+  const [selectedFacebookForm, setSelectedFacebookForm] = useState<string>('');
+  const [selectedFacebookPage, setSelectedFacebookPage] = useState<string>('');
+  const [selectedPageAccessToken, setSelectedPageAccessToken] = useState<string>('');
+  const [loadingFacebookData, setLoadingFacebookData] = useState(false);
   const [showUpdateLeadModal, setShowUpdateLeadModal] = useState(false);
   const [showTikTokModal, setShowTikTokModal] = useState(false);
   const [tiktokActiveTab, setTikTokActiveTab] = useState<'configuracoes' | 'autorizacao'>('configuracoes');
@@ -283,12 +299,20 @@ export default function Integrations() {
   const [showInstagramModal, setShowInstagramModal] = useState(false);
   const [showInstagramLoginModal, setShowInstagramLoginModal] = useState(false);
   const [showInstagramEditModal, setShowInstagramEditModal] = useState(false);
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
+  const [whatsappQrUrl, setWhatsappQrUrl] = useState('');
+  const [whatsappQrData, setWhatsappQrData] = useState('');
+  const [whatsappQrLoading, setWhatsappQrLoading] = useState(false);
+  const [whatsappQrError, setWhatsappQrError] = useState('');
+  const [whatsappQrInfo, setWhatsappQrInfo] = useState('');
+  const [whatsappQrExpiresAt, setWhatsappQrExpiresAt] = useState<string | null>(null);
   const [instagramEmail, setInstagramEmail] = useState('');
   const [instagramPassword, setInstagramPassword] = useState('');
   const [instagramTitle, setInstagramTitle] = useState('');
   const [instagramIntegrations, setInstagramIntegrations] = useState<InstagramIntegration[]>([]);
   const [isInstagramLoggedIn, setIsInstagramLoggedIn] = useState(false);
   const [editingInstagramId, setEditingInstagramId] = useState<string | null>(null);
+  const [whatsappIntegrations, setWhatsappIntegrations] = useState<WhatsAppIntegration[]>([]);
   const [facebookTitle, setFacebookTitle] = useState('');
   const [selectedFacebookAccount, setSelectedFacebookAccount] = useState('');
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
@@ -466,11 +490,17 @@ export default function Integrations() {
       setShowFacebookPermissionsModal(false);
       setShowFacebookAccountModal(false);
       setShowFacebookModal(false);
+      setShowFacebookFormModal(false);
       setFacebookTitle('');
       setFacebookEmail('');
       setFacebookPassword('');
       setEditingFacebookId(null);
       setPendingFacebookData(null);
+      setSelectedFacebookForm('');
+      setSelectedFacebookPage('');
+      setSelectedPageAccessToken('');
+      setFacebookForms([]);
+      setFacebookPages([]);
       
       // Mudar para a aba de entradas antes de recarregar
       setActiveTab('entradas');
@@ -994,6 +1024,53 @@ export default function Integrations() {
     localStorage.setItem('instagramIntegrations', JSON.stringify(updatedIntegrations));
   };
 
+  // Toggle status da integração do WhatsApp
+  const handleToggleWhatsAppStatus = async (id: string) => {
+    const current = whatsappIntegrations.find(integration => integration.id === id);
+    if (!current) {
+      return;
+    }
+
+    const nextStatus = current.status === 'active' ? 'inactive' : 'active';
+    if (nextStatus === 'inactive') {
+      try {
+        await api.post('/integrations/whatsapp/disconnect');
+      } catch (error: any) {
+        console.error('Erro ao desconectar WhatsApp:', error);
+        alert(error.response?.data?.message || 'Erro ao desconectar WhatsApp');
+        return;
+      }
+    } else {
+      // Reativar: abrir QR Code para nova sessão
+      setShowWhatsAppModal(true);
+      fetchWhatsAppQr();
+      return;
+    }
+
+    const updatedIntegrations: WhatsAppIntegration[] = whatsappIntegrations.map(integration =>
+      integration.id === id ? { ...integration, status: 'inactive' } : integration
+    );
+    setWhatsappIntegrations(updatedIntegrations);
+    localStorage.setItem('whatsappIntegrations', JSON.stringify(updatedIntegrations));
+  };
+
+  // Excluir integração do WhatsApp
+  const handleDeleteWhatsApp = async (id: string) => {
+    if (window.confirm('Tem certeza que deseja excluir esta integração do WhatsApp?')) {
+      try {
+        await api.post('/integrations/whatsapp/disconnect');
+      } catch (error: any) {
+        console.error('Erro ao desconectar WhatsApp:', error);
+        alert(error.response?.data?.message || 'Erro ao desconectar WhatsApp');
+        return;
+      }
+
+      const updatedIntegrations = whatsappIntegrations.filter(whatsapp => whatsapp.id !== id);
+      setWhatsappIntegrations(updatedIntegrations);
+      localStorage.setItem('whatsappIntegrations', JSON.stringify(updatedIntegrations));
+    }
+  };
+
   // Excluir integração do Instagram
   const handleDeleteInstagram = (id: string) => {
     if (window.confirm('Tem certeza que deseja excluir esta integração do Instagram?')) {
@@ -1140,6 +1217,20 @@ export default function Integrations() {
     }
   }, []);
 
+  // Carregar integrações do WhatsApp salvas
+  useEffect(() => {
+    const savedIntegrations = localStorage.getItem('whatsappIntegrations');
+    if (savedIntegrations) {
+      try {
+        const parsed = JSON.parse(savedIntegrations);
+        setWhatsappIntegrations(parsed);
+        console.log('Integrações do WhatsApp carregadas:', parsed);
+      } catch (e) {
+        console.error('Erro ao carregar integrações do WhatsApp:', e);
+      }
+    }
+  }, []);
+
   // Processar callback do Instagram após OAuth
   useEffect(() => {
     const instagramSuccess = searchParams.get('instagram_success');
@@ -1246,6 +1337,8 @@ export default function Integrations() {
     if (facebookError) {
       const errorMessage = decodeURIComponent(facebookError);
       
+      console.error('❌ Erro do Facebook detectado:', errorMessage);
+      
       // Mostrar mensagem de erro mais clara
       alert(`❌ Erro na autenticação do Facebook\n\n${errorMessage}\n\nPor favor, verifique seu login e senha do Facebook e tente novamente.`);
       
@@ -1254,10 +1347,29 @@ export default function Integrations() {
       newParams.delete('facebook_error');
       setSearchParams(newParams, { replace: true });
     } else if (facebookSuccess === 'true' && facebookAccessToken) {
+      console.log('✅ Facebook callback detectado:', {
+        facebookSuccess,
+        hasAccessToken: !!facebookAccessToken,
+        hasPages: !!facebookPages,
+        url: window.location.href
+      });
       const processFacebookCallback = async () => {
         try {
-          const pages = facebookPages ? JSON.parse(decodeURIComponent(facebookPages)) : [];
+          console.log('🔄 Processando callback do Facebook...', {
+            hasPages: !!facebookPages,
+            pagesValue: facebookPages ? facebookPages.substring(0, 100) + '...' : 'null',
+            hasAccessToken: !!facebookAccessToken,
+            expiresIn: facebookExpiresIn
+          });
+
+          // Parsear páginas do callback
+          const pagesFromCallback = facebookPages ? JSON.parse(decodeURIComponent(facebookPages)) : [];
           const expiresIn = facebookExpiresIn ? parseInt(facebookExpiresIn) : undefined;
+          
+          console.log('📄 Páginas parseadas do callback:', {
+            pagesCount: pagesFromCallback.length,
+            pages: pagesFromCallback.map((p: any) => ({ id: p.id, name: p.name }))
+          });
 
           // Se houver warning, mostrar ao usuário
           if (facebookWarning) {
@@ -1265,63 +1377,15 @@ export default function Integrations() {
             console.warn('Facebook warning:', warningMessage);
           }
 
-          // Se não houver páginas, permitir criar integração mesmo assim
-          if (!pages || pages.length === 0) {
-            // Criar integração usando o token do usuário diretamente
-            // O backend vai usar o ID do usuário do Facebook como page_id
-            const defaultTitle = 'Integração Facebook - Conta Pessoal';
-            
-            // Criar integração automaticamente com título padrão
-            await handleFacebookConnect({
-              access_token: facebookAccessToken,
-              page_id: '',
-              page_name: 'Conta Pessoal',
-              expires_in: expiresIn
-            }, defaultTitle);
+          // Salvar token do usuário
+          const userAccessToken = facebookAccessToken;
 
-            // Limpar parâmetros da URL
-            const newParams = new URLSearchParams(searchParams);
-            newParams.delete('facebook_success');
-            newParams.delete('access_token');
-            newParams.delete('expires_in');
-            newParams.delete('pages');
-            newParams.delete('warning');
-            setSearchParams(newParams, { replace: true });
-            
-            return;
-          }
+          // Abrir modal imediatamente
+          console.log('🚀 Abrindo modal de seleção de páginas e formulários...');
+          setShowFacebookFormModal(true);
+          console.log('✅ Modal aberto. showFacebookFormModal:', true);
 
-          // Usar a primeira página disponível
-          const firstPage = pages[0];
-          
-          // Validar se a página tem dados válidos
-          if (!firstPage || !firstPage.id) {
-            alert('❌ Erro: Dados da página inválidos. Por favor, verifique seu login e senha do Facebook e tente novamente.');
-            
-            const newParams = new URLSearchParams(searchParams);
-            newParams.delete('facebook_success');
-            newParams.delete('access_token');
-            newParams.delete('expires_in');
-            newParams.delete('pages');
-            newParams.delete('warning');
-            setSearchParams(newParams, { replace: true });
-            return;
-          }
-
-          const pageAccessToken = firstPage.access_token || facebookAccessToken;
-
-          // Criar título padrão baseado no nome da página
-          const defaultTitle = `Integração Facebook - ${firstPage.name || 'Conta Pessoal'}`;
-
-          // Criar integração automaticamente após autenticação bem-sucedida
-          await handleFacebookConnect({
-            access_token: pageAccessToken,
-            page_id: firstPage.id,
-            page_name: firstPage.name,
-            expires_in: expiresIn
-          }, defaultTitle);
-
-          // Limpar parâmetros da URL
+          // Limpar parâmetros da URL ANTES de buscar dados (para evitar re-execução)
           const newParams = new URLSearchParams(searchParams);
           newParams.delete('facebook_success');
           newParams.delete('access_token');
@@ -1329,6 +1393,191 @@ export default function Integrations() {
           newParams.delete('pages');
           newParams.delete('warning');
           setSearchParams(newParams, { replace: true });
+
+          // Buscar páginas (do callback ou via API)
+          let pagesToUse: any[] = [];
+          
+          if (pagesFromCallback && pagesFromCallback.length > 0) {
+            // Usar páginas do callback
+            pagesToUse = pagesFromCallback;
+            console.log('✅ Usando páginas do callback:', pagesToUse.length);
+          } else {
+            // Tentar buscar páginas via API
+            console.log('⚠️ Nenhuma página no callback, tentando buscar via API...');
+            setLoadingFacebookData(true);
+            try {
+              const pagesResponse = await api.get('/integrations/facebook/pages', {
+                params: {
+                  access_token: userAccessToken
+                }
+              }).catch((err) => {
+                console.warn('Erro ao buscar páginas via API:', err);
+                return { data: { pages: [] } };
+              });
+
+              pagesToUse = pagesResponse.data?.pages || [];
+              console.log('📄 Páginas encontradas via API:', {
+                count: pagesToUse.length,
+                pages: pagesToUse.map((p: any) => ({ 
+                  id: p.id, 
+                  name: p.name,
+                  hasAccessToken: !!p.access_token,
+                  accessTokenLength: p.access_token ? p.access_token.length : 0
+                }))
+              });
+            } catch (error: any) {
+              console.error('❌ Erro ao buscar páginas:', error);
+              pagesToUse = [];
+            } finally {
+              setLoadingFacebookData(false);
+            }
+          }
+          
+          // Se ainda não houver páginas, criar uma página padrão "Conta Pessoal"
+          if (pagesToUse.length === 0) {
+            console.log('⚠️ Nenhuma página encontrada, criando página padrão "Conta Pessoal"');
+            pagesToUse = [{
+              id: 'me',
+              name: 'Conta Pessoal',
+              access_token: userAccessToken
+            }];
+          }
+          
+          // IMPORTANTE: Atualizar estado com as páginas ANTES de continuar
+          console.log('✅ Definindo páginas no estado:', {
+            count: pagesToUse.length,
+            pages: pagesToUse.map((p: any) => ({ id: p.id, name: p.name }))
+          });
+          
+          // Usar setTimeout para garantir que o estado seja atualizado antes de continuar
+          setFacebookPages([...pagesToUse]); // Criar novo array para forçar re-render
+          setFacebookForms([]); // Limpar formulários
+          
+          // Aguardar um pouco para garantir que o estado foi atualizado
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          // Se houver páginas, selecionar a primeira automaticamente e buscar formulários
+          if (pagesToUse.length > 0) {
+            const firstPage = pagesToUse[0];
+            const pageAccessToken = firstPage.access_token || userAccessToken;
+            
+            console.log('📄 Selecionando primeira página:', {
+              id: firstPage.id,
+              name: firstPage.name,
+              hasToken: !!pageAccessToken
+            });
+            
+            setSelectedFacebookPage(firstPage.id);
+            setSelectedPageAccessToken(pageAccessToken);
+            
+            // Atualizar dados pendentes com a primeira página
+            setPendingFacebookData({
+              access_token: pageAccessToken,
+              page_id: firstPage.id,
+              page_name: firstPage.name,
+              expires_in: expiresIn
+            });
+            
+            // Preencher título automaticamente
+            const defaultTitle = `Integração Facebook - ${firstPage.name || 'Conta Pessoal'}`;
+            setFacebookTitle(defaultTitle);
+            
+            console.log('📄 Primeira página selecionada automaticamente:', firstPage.name);
+            
+            // Buscar formulários da primeira página automaticamente
+            setFacebookFormsError('');
+            setLoadingFacebookData(true);
+            try {
+              console.log('🔍 Buscando formulários da primeira página...', {
+                page_id: firstPage.id,
+                page_name: firstPage.name
+              });
+              
+              console.log('🔍 Parâmetros da requisição (primeira página):', {
+                page_id: firstPage.id,
+                page_name: firstPage.name,
+                hasAccessToken: !!pageAccessToken,
+                accessTokenLength: pageAccessToken ? pageAccessToken.length : 0
+              });
+
+              // Enviar tanto o token da página quanto o token do usuário (para fallback)
+              const userAccessTokenForForms = userAccessToken;
+              
+              const formsResponse = await api.get('/integrations/facebook/forms', {
+                params: {
+                  access_token: pageAccessToken,
+                  page_id: firstPage.id,
+                  user_access_token: userAccessTokenForForms // Token do usuário para fallback
+                }
+              }).catch((err: any) => {
+                console.error('❌ Erro ao buscar formulários (catch - primeira página):', {
+                  message: err.message,
+                  response: err.response?.data,
+                  status: err.response?.status,
+                  page_id: firstPage.id
+                });
+                return { 
+                  data: { 
+                    forms: [],
+                    error: err.response?.data || err.message 
+                  } 
+                };
+              });
+
+              console.log('📋 Resposta completa da API (primeira página):', {
+                success: formsResponse.data?.success,
+                formsCount: formsResponse.data?.forms?.length || 0,
+                forms: formsResponse.data?.forms,
+                error: formsResponse.data?.error
+              });
+
+              const forms = formsResponse.data?.forms || [];
+              
+              if (forms.length === 0 && formsResponse.data?.error) {
+                console.warn('⚠️ Nenhum formulário encontrado. Erro:', formsResponse.data.error);
+                const errorMessage = formsResponse.data.error?.message ||
+                  formsResponse.data.error?.error?.message ||
+                  formsResponse.data.error?.error?.error?.message ||
+                  'Erro desconhecido';
+                if (errorMessage.includes('pages_manage_ads')) {
+                  setFacebookFormsError('O Facebook bloqueou o acesso aos formulários desta página. ' +
+                    'É necessário habilitar a permissão pages_manage_ads para este aplicativo.');
+                } else if (errorMessage.toLowerCase().includes('permission')) {
+                  setFacebookFormsError('O Facebook negou acesso aos formulários desta página. ' +
+                    'Verifique se você é administrador da página e tente novamente.');
+                }
+              }
+              
+              console.log('✅ Formulários recebidos:', {
+                count: forms.length,
+                forms: forms.map((f: any) => ({ id: f.id, name: f.name }))
+              });
+              
+              setFacebookForms([...forms]); // Criar novo array para forçar re-render
+              
+              if (forms.length > 0) {
+                setFacebookFormsError('');
+              }
+              
+              // Selecionar o primeiro formulário automaticamente se houver
+              if (forms.length > 0) {
+                setSelectedFacebookForm(forms[0].id);
+                console.log('📝 Formulário selecionado automaticamente:', forms[0].id);
+              } else {
+                console.log('ℹ️ Nenhum formulário encontrado para a primeira página');
+              }
+            } catch (error: any) {
+              console.error('❌ Erro ao buscar formulários (try-catch - primeira página):', {
+                message: error.message,
+                response: error.response?.data,
+                stack: error.stack
+              });
+              setFacebookForms([]);
+            } finally {
+              setLoadingFacebookData(false);
+              console.log('✅ Carregamento concluído. Modal deve estar visível com dados.');
+            }
+          }
         } catch (error: any) {
           console.error('Erro ao processar callback do Facebook:', error);
           alert(`❌ Erro ao processar dados do Facebook\n\n${error.message}\n\nPor favor, verifique seu login e senha do Facebook e tente novamente.`);
@@ -1346,15 +1595,42 @@ export default function Integrations() {
 
       processFacebookCallback();
     } else if (facebookError) {
+      console.error('❌ Erro do Facebook detectado (segunda verificação):', facebookError);
       alert('Erro ao autorizar Facebook: ' + decodeURIComponent(facebookError));
       
       // Limpar parâmetros de erro
       const newParams = new URLSearchParams(searchParams);
       newParams.delete('facebook_error');
       setSearchParams(newParams, { replace: true });
+    } else {
+      // Log quando há parâmetros relacionados ao Facebook mas não foram processados
+      const hasFacebookParams = searchParams.toString().includes('facebook') || 
+                                searchParams.toString().includes('access_token') ||
+                                searchParams.toString().includes('pages');
+      
+      if (hasFacebookParams) {
+        console.warn('⚠️ Parâmetros relacionados ao Facebook detectados na URL, mas não processados:', {
+          search: window.location.search,
+          facebookSuccess,
+          facebookAccessToken: facebookAccessToken ? 'presente' : 'ausente',
+          allParams: Object.fromEntries(searchParams.entries())
+        });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  // Debug: Log quando facebookPages mudar
+  useEffect(() => {
+    if (showFacebookFormModal) {
+      console.log('🔄 Estado facebookPages atualizado no modal:', {
+        count: facebookPages.length,
+        pages: facebookPages.map((p: any) => ({ id: p.id, name: p.name })),
+        selectedPage: selectedFacebookPage,
+        formsCount: facebookForms.length
+      });
+    }
+  }, [facebookPages, selectedFacebookPage, facebookForms, showFacebookFormModal]);
 
   // Mock de filas disponíveis
   const availableQueues = [
@@ -1388,12 +1664,86 @@ export default function Integrations() {
     } else if (integrationId === 'google-ads') {
       setShowAddModal(false);
       setShowGoogleAdsModal(true);
+    } else if (integrationId === 'whatsapp') {
+      setShowAddModal(false);
+      setShowWhatsAppModal(true);
+      fetchWhatsAppQr();
     } else {
       // Aqui você pode adicionar a lógica para adicionar outras integrações
       console.log('Adicionar integração:', integrationId);
       setShowAddModal(false);
     }
   };
+
+  const buildWhatsAppQrUrl = (data: string) => {
+    return `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(data)}`;
+  };
+
+  const fetchWhatsAppQr = useCallback(async () => {
+    try {
+      setWhatsappQrLoading(true);
+      setWhatsappQrError('');
+      setWhatsappQrInfo('');
+      const response = await api.get('/integrations/whatsapp/qr');
+      if (response.data && response.data.success) {
+        const qrData = response.data.qr?.data || '';
+        const qrUrl = response.data.qr?.qrUrl || (qrData ? buildWhatsAppQrUrl(qrData) : '');
+        setWhatsappQrData(qrData);
+        setWhatsappQrUrl(qrUrl);
+        setWhatsappQrExpiresAt(response.data.qr?.expiresAt || null);
+        if (response.data.status === 'connected' || response.data.status === 'connecting') {
+          const message = response.data.status === 'connected'
+            ? 'WhatsApp conectado com sucesso.'
+            : 'WhatsApp sincronizando, aguarde alguns segundos.';
+          setWhatsappQrInfo(message);
+          setWhatsappQrData('');
+          setWhatsappQrUrl('');
+          setWhatsappQrExpiresAt(null);
+          const now = new Date().toISOString();
+          const integration: WhatsAppIntegration = {
+            id: `whatsapp_${user?.id || 'default'}`,
+            title: 'WhatsApp',
+            accountName: user?.email || 'WhatsApp Web',
+            connectedAt: now,
+            status: 'active'
+          };
+          const updated = [integration];
+          setWhatsappIntegrations(updated);
+          localStorage.setItem('whatsappIntegrations', JSON.stringify(updated));
+          setShowWhatsAppModal(false);
+          alert(message);
+          return;
+        }
+        if (!qrData && response.data.message) {
+          setWhatsappQrInfo(response.data.message);
+        }
+      } else {
+        setWhatsappQrError(response.data?.message || 'Erro ao gerar QR Code do WhatsApp');
+      }
+    } catch (error: any) {
+      console.error('Erro ao gerar QR Code do WhatsApp:', error);
+      setWhatsappQrError(error.response?.data?.message || 'Erro ao gerar QR Code do WhatsApp');
+    } finally {
+      setWhatsappQrLoading(false);
+    }
+  }, []);
+
+  const openWhatsAppModal = useCallback(() => {
+    setShowWhatsAppModal(true);
+    fetchWhatsAppQr();
+  }, [fetchWhatsAppQr]);
+
+  useEffect(() => {
+    if (!showWhatsAppModal) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      fetchWhatsAppQr();
+    }, 4000);
+
+    return () => clearInterval(intervalId);
+  }, [showWhatsAppModal, fetchWhatsAppQr]);
 
   // Gerar URL do webhook
   const generateWebhookUrl = (id: string) => {
@@ -1748,7 +2098,7 @@ export default function Integrations() {
             </div>
           </div>
         </div>
-      ) : (activeIntegrations.length > 0 || webhookIntegrations.length > 0 || facebookIntegrations.length > 0 || tiktokIntegrations.length > 0 || instagramIntegrations.length > 0 || googleAdsIntegrations.length > 0) ? (
+      ) : (activeIntegrations.length > 0 || webhookIntegrations.length > 0 || facebookIntegrations.length > 0 || tiktokIntegrations.length > 0 || instagramIntegrations.length > 0 || googleAdsIntegrations.length > 0 || whatsappIntegrations.length > 0) ? (
         <div className="space-y-4">
           {/* Webhook Integrations */}
           {webhookIntegrations.length > 0 && (
@@ -2113,6 +2463,74 @@ export default function Integrations() {
             </div>
           )}
 
+          {/* WhatsApp Integrations */}
+          {activeTab === 'entradas' && whatsappIntegrations.length > 0 && (
+            <div className="space-y-4">
+              {whatsappIntegrations.map((whatsappIntegration) => (
+                <div key={whatsappIntegration.id} className="bg-white rounded-lg shadow-md p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      {/* WhatsApp Icon */}
+                      <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center text-green-600 relative">
+                        <FiMessageCircle className="w-6 h-6" />
+                        {/* LED Verde/Vermelho */}
+                        <div className="absolute -top-1 -right-1">
+                          <div className="relative">
+                            <div className={`w-3 h-3 rounded-full ${whatsappIntegration.status === 'active' ? 'bg-green-500' : 'bg-red-500'} animate-pulse`}></div>
+                            <div className={`absolute inset-0 w-3 h-3 rounded-full ${whatsappIntegration.status === 'active' ? 'bg-green-500' : 'bg-red-500'} opacity-75 animate-ping`}></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Info */}
+                      <div>
+                        <h3 className="text-lg font-semibold text-gray-900">{whatsappIntegration.title}</h3>
+                        <p className="text-sm text-gray-600">{whatsappIntegration.accountName}</p>
+                        <p className="text-xs text-gray-500">
+                          Conectado em {new Date(whatsappIntegration.connectedAt).toLocaleDateString('pt-BR')}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Status and Action */}
+                    <div className="flex items-center space-x-4">
+                      <div className="flex items-center gap-2">
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          whatsappIntegration.status === 'active'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {whatsappIntegration.status === 'active' ? 'Ativo' : 'Inativo'}
+                        </span>
+                        <button
+                          onClick={() => handleToggleWhatsAppStatus(whatsappIntegration.id)}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                            whatsappIntegration.status === 'active' ? 'bg-green-600' : 'bg-red-600'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              whatsappIntegration.status === 'active' ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleDeleteWhatsApp(whatsappIntegration.id)}
+                          className="w-10 h-10 flex items-center justify-center border border-gray-300 rounded-lg hover:bg-red-50 hover:border-red-300 transition-colors"
+                          title="Excluir"
+                        >
+                          <FiTrash2 className="w-5 h-5 text-gray-600" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Google Ads Integrations */}
           {activeTab === 'entradas' && googleAdsIntegrations.length > 0 && (
             <div className="space-y-4">
@@ -2220,14 +2638,26 @@ export default function Integrations() {
           )}
 
           {/* Other Integrations */}
-          {activeIntegrations.map((integration) => (
+          {activeIntegrations.map((integration) => {
+            const isWhatsApp = integration.id === 'whatsapp';
+            return (
             <div key={integration.id} className="bg-white rounded-lg shadow-md p-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-4">
                   {/* Icon */}
-                  <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center text-green-600">
-                    {integration.icon}
-                  </div>
+                  {isWhatsApp ? (
+                    <button
+                      onClick={openWhatsAppModal}
+                      className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center text-green-600 hover:bg-green-200 transition-colors"
+                      title="Conectar WhatsApp"
+                    >
+                      {integration.icon}
+                    </button>
+                  ) : (
+                    <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center text-green-600">
+                      {integration.icon}
+                    </div>
+                  )}
                   
                   {/* Info */}
                   <div>
@@ -2245,13 +2675,16 @@ export default function Integrations() {
                   }`}>
                     {integration.status === 'active' ? 'Ativo' : 'Inativo'}
                   </span>
-                  <button className="px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 border border-blue-600 rounded-lg hover:bg-blue-50 transition-colors">
+                  <button
+                    onClick={isWhatsApp ? openWhatsAppModal : undefined}
+                    className="px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 border border-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
+                  >
                     Configurar
                   </button>
                 </div>
               </div>
             </div>
-          ))}
+          )})}
         </div>
       ) : (
         /* Empty State */
@@ -2654,6 +3087,327 @@ export default function Integrations() {
                   Política de Privacidade e Termos de Serviço do BiaCRM
                 </a>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Seleção de Formulários e Usuários do Facebook */}
+      {showFacebookFormModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999] p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full">
+            {/* Modal Header */}
+            <div className="flex items-center gap-4 p-4 bg-gray-800 text-white">
+              <button
+                onClick={() => {
+                  setShowFacebookFormModal(false);
+                  setSelectedFacebookForm('');
+                  setSelectedFacebookPage('');
+                  setSelectedPageAccessToken('');
+                  setFacebookFormsError('');
+                }}
+                className="text-white hover:text-gray-300 transition-colors"
+              >
+                <FiX className="w-6 h-6" />
+              </button>
+              <h2 className="text-lg font-semibold">Formulário do Facebook</h2>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6">
+              {/* Páginas - PRIMEIRO */}
+              <div className="mb-6">
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  Selecione a página
+                </label>
+                {loadingFacebookData && (
+                  <div className="mb-2 text-sm text-blue-600 flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                    <span>Carregando páginas...</span>
+                  </div>
+                )}
+                <div className="relative">
+                  <select
+                    value={selectedFacebookPage}
+                    onChange={async (e) => {
+                      const pageId = e.target.value;
+                      setSelectedFacebookPage(pageId);
+                      setSelectedFacebookForm(''); // Limpar formulário selecionado
+                      setFacebookFormsError('');
+                      
+                      // Encontrar a página selecionada
+                      const selectedPage = facebookPages.find((p: any) => p.id === pageId);
+                      
+                      console.log('📄 Página selecionada:', {
+                        pageId: pageId,
+                        selectedPage: selectedPage ? {
+                          id: selectedPage.id,
+                          name: selectedPage.name,
+                          hasAccessToken: !!selectedPage.access_token,
+                          accessTokenLength: selectedPage.access_token ? selectedPage.access_token.length : 0
+                        } : null,
+                        pendingFacebookData: pendingFacebookData ? {
+                          hasAccessToken: !!pendingFacebookData.access_token
+                        } : null
+                      });
+                      
+                      if (selectedPage && pendingFacebookData) {
+                        // IMPORTANTE: Usar o token da página (access_token da página), não o token do usuário
+                        const pageAccessToken = selectedPage.access_token || pendingFacebookData.access_token;
+                        
+                        console.log('🔑 Token a ser usado:', {
+                          source: selectedPage.access_token ? 'page_token' : 'user_token',
+                          hasToken: !!pageAccessToken,
+                          tokenLength: pageAccessToken ? pageAccessToken.length : 0
+                        });
+                        
+                        setSelectedPageAccessToken(pageAccessToken);
+                        
+                        // Atualizar dados pendentes com a página selecionada
+                        setPendingFacebookData({
+                          access_token: pageAccessToken,
+                          page_id: selectedPage.id,
+                          page_name: selectedPage.name,
+                          expires_in: pendingFacebookData.expires_in
+                        });
+                        
+                        // Buscar formulários da página selecionada
+                        setFacebookFormsError('');
+                        setLoadingFacebookData(true);
+                        try {
+                          console.log('🔍 Buscando formulários da página selecionada...', {
+                            page_id: selectedPage.id,
+                            page_name: selectedPage.name
+                          });
+                          
+                          console.log('🔍 Parâmetros da requisição:', {
+                            page_id: selectedPage.id,
+                            page_name: selectedPage.name,
+                            hasAccessToken: !!pageAccessToken,
+                            accessTokenLength: pageAccessToken ? pageAccessToken.length : 0
+                          });
+
+                          // Enviar tanto o token da página quanto o token do usuário (para fallback)
+                          const userAccessToken = pendingFacebookData?.access_token || pageAccessToken;
+                          
+                          const formsResponse = await api.get('/integrations/facebook/forms', {
+                            params: {
+                              access_token: pageAccessToken,
+                              page_id: selectedPage.id,
+                              user_access_token: userAccessToken // Token do usuário para fallback
+                            }
+                          }).catch((err: any) => {
+                            console.error('❌ Erro ao buscar formulários (catch):', {
+                              message: err.message,
+                              response: err.response?.data,
+                              status: err.response?.status,
+                              page_id: selectedPage.id
+                            });
+                            // Retornar objeto com forms vazio mas incluir erro para debug
+                            return { 
+                              data: { 
+                                forms: [],
+                                error: err.response?.data || err.message 
+                              } 
+                            };
+                          });
+
+                          console.log('📋 Resposta completa da API:', {
+                            success: formsResponse.data?.success,
+                            formsCount: formsResponse.data?.forms?.length || 0,
+                            forms: formsResponse.data?.forms,
+                            error: formsResponse.data?.error
+                          });
+
+                          const forms = formsResponse.data?.forms || [];
+                          
+                          if (forms.length === 0 && formsResponse.data?.error) {
+                            console.warn('⚠️ Nenhum formulário encontrado. Erro:', formsResponse.data.error);
+                            // Mostrar mensagem ao usuário se houver erro específico
+                            const errorMessage = formsResponse.data.error?.message ||
+                              formsResponse.data.error?.error?.message ||
+                              formsResponse.data.error?.error?.error?.message ||
+                              'Erro desconhecido';
+                            if (errorMessage.includes('pages_manage_ads')) {
+                              setFacebookFormsError('O Facebook bloqueou o acesso aos formulários desta página. ' +
+                                'É necessário habilitar a permissão pages_manage_ads para este aplicativo.');
+                            } else if (errorMessage.toLowerCase().includes('permission')) {
+                              setFacebookFormsError('O Facebook negou acesso aos formulários desta página. ' +
+                                'Verifique se você é administrador da página e tente novamente.');
+                            }
+                          } else if (forms.length > 0) {
+                            setFacebookFormsError('');
+                          }
+                          
+                          setFacebookForms(forms);
+                          
+                          // Selecionar o primeiro formulário automaticamente se houver
+                          if (forms.length > 0) {
+                            setSelectedFacebookForm(forms[0].id);
+                            console.log('📝 Formulário selecionado automaticamente:', forms[0].id);
+                          } else {
+                            console.log('ℹ️ Nenhum formulário encontrado para esta página');
+                          }
+                          
+                          console.log('✅ Formulários carregados:', forms.length);
+                        } catch (error: any) {
+                          console.error('❌ Erro ao buscar formulários (try-catch):', {
+                            message: error.message,
+                            response: error.response?.data,
+                            stack: error.stack
+                          });
+                          setFacebookForms([]);
+                        } finally {
+                          setLoadingFacebookData(false);
+                        }
+                      } else {
+                        // Se nenhuma página selecionada, limpar formulários
+                        setFacebookForms([]);
+                        setSelectedFacebookForm('');
+                        setSelectedPageAccessToken('');
+                        setFacebookFormsError('');
+                      }
+                    }}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900 appearance-none"
+                  >
+                    <option value="">Selecione uma página</option>
+                    {facebookPages && facebookPages.length > 0 ? (
+                      facebookPages.map((page: any) => {
+                        console.log('📄 Renderizando página no select:', { id: page.id, name: page.name });
+                        return (
+                          <option key={page.id} value={page.id}>
+                            {page.name || `Página ${page.id}`}
+                          </option>
+                        );
+                      })
+                    ) : (
+                      <option value="" disabled>Nenhuma página disponível</option>
+                    )}
+                  </select>
+                  <FiChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+                </div>
+                {facebookPages.length === 0 && !loadingFacebookData && (
+                  <p className="text-sm text-gray-500 mt-2">
+                    Nenhuma página encontrada.
+                  </p>
+                )}
+                {loadingFacebookData && facebookPages.length === 0 && (
+                  <p className="text-sm text-gray-400 mt-2">
+                    Carregando páginas...
+                  </p>
+                )}
+              </div>
+
+                  {/* Formulários - DEPOIS (desabilitado até selecionar página) */}
+                  <div className="mb-6">
+                    <label className="text-sm font-medium text-gray-700 mb-2 block">
+                      Selecione o formulário
+                    </label>
+                    {facebookFormsError && (
+                      <div className="mb-3 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+                        {facebookFormsError}
+                      </div>
+                    )}
+                    {loadingFacebookData && selectedFacebookPage && (
+                      <div className="mb-2 text-sm text-blue-600 flex items-center gap-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                        <span>Carregando formulários...</span>
+                      </div>
+                    )}
+                    <div className="relative">
+                      <select
+                        value={selectedFacebookForm}
+                        onChange={(e) => setSelectedFacebookForm(e.target.value)}
+                        disabled={!selectedFacebookPage || loadingFacebookData}
+                        className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900 appearance-none ${
+                          !selectedFacebookPage || loadingFacebookData 
+                            ? 'bg-gray-100 cursor-not-allowed opacity-60' 
+                            : ''
+                        }`}
+                      >
+                        <option value="">
+                          {loadingFacebookData && selectedFacebookPage
+                            ? 'Carregando formulários...' 
+                            : !selectedFacebookPage 
+                              ? 'Selecione uma página primeiro' 
+                              : 'Selecione um formulário'}
+                        </option>
+                        {facebookForms && facebookForms.length > 0 ? (
+                          facebookForms.map((form: any) => (
+                            <option key={form.id} value={form.id}>
+                              {form.name || `Formulário ${form.id}`}
+                            </option>
+                          ))
+                        ) : (
+                          selectedFacebookPage && !loadingFacebookData && (
+                            <option value="" disabled>Nenhum formulário disponível</option>
+                          )
+                        )}
+                      </select>
+                      <FiChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+                    </div>
+                    {selectedFacebookPage && facebookForms.length === 0 && !loadingFacebookData && (
+                      <p className="text-sm text-gray-500 mt-2">
+                        Nenhum formulário encontrado para esta página.
+                      </p>
+                    )}
+                    {!selectedFacebookPage && (
+                      <p className="text-sm text-gray-400 mt-2">
+                        Selecione uma página para ver os formulários disponíveis.
+                      </p>
+                    )}
+                  </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setShowFacebookFormModal(false);
+                  setSelectedFacebookForm('');
+                  setSelectedFacebookPage('');
+                  setSelectedPageAccessToken('');
+                  setFacebookFormsError('');
+                }}
+                className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  if (!pendingFacebookData) {
+                    alert('Dados do Facebook não encontrados. Por favor, tente novamente.');
+                    return;
+                  }
+
+                  if (!selectedFacebookPage) {
+                    alert('Por favor, selecione uma página primeiro.');
+                    return;
+                  }
+
+                  if (!selectedFacebookForm) {
+                    alert('Por favor, selecione um formulário.');
+                    return;
+                  }
+
+                  // Usar título já preenchido ou criar padrão
+                  const titleToUse = facebookTitle || `Integração Facebook - ${pendingFacebookData.page_name || 'Conta Pessoal'}`;
+                  
+                  // Criar integração com os dados selecionados
+                  // Nota: Os formulários e usuários selecionados podem ser salvos no backend se necessário
+                  await handleFacebookConnect(pendingFacebookData, titleToUse);
+                  
+                  // Fechar modal
+                  setShowFacebookFormModal(false);
+                  setSelectedFacebookForm('');
+                  setSelectedFacebookPage('');
+                  setSelectedPageAccessToken('');
+                }}
+                disabled={loadingFacebookData || !selectedFacebookPage || !selectedFacebookForm}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Próximo
+              </button>
             </div>
           </div>
         </div>
@@ -3636,6 +4390,76 @@ export default function Integrations() {
                 className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
               >
                 Entrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal WhatsApp - QR Code */}
+      {showWhatsAppModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Conectar WhatsApp</h2>
+                <p className="text-sm text-gray-600">Escaneie o QR Code com seu WhatsApp</p>
+              </div>
+              <button
+                onClick={() => setShowWhatsAppModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <FiX className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6">
+              <div className="flex flex-col items-center gap-4">
+                {whatsappQrLoading && (
+                  <div className="text-sm text-gray-600">Gerando QR Code...</div>
+                )}
+                {!whatsappQrLoading && whatsappQrUrl && (
+                  <img
+                    src={whatsappQrUrl}
+                    alt="QR Code do WhatsApp"
+                    className="w-60 h-60 border border-gray-200 rounded-lg"
+                  />
+                )}
+                {!whatsappQrLoading && !whatsappQrUrl && !whatsappQrError && (
+                  <div className="text-sm text-gray-500">QR Code indisponível.</div>
+                )}
+                {whatsappQrError && (
+                  <div className="text-sm text-red-600 text-center">{whatsappQrError}</div>
+                )}
+                {whatsappQrInfo && (
+                  <div className="text-sm text-blue-600 text-center">{whatsappQrInfo}</div>
+                )}
+                {whatsappQrExpiresAt && (
+                  <div className="text-xs text-gray-500">
+                    Expira em: {new Date(whatsappQrExpiresAt).toLocaleString()}
+                  </div>
+                )}
+                <div className="text-xs text-gray-500 text-center">
+                  Abra o WhatsApp no celular &rarr; Dispositivos conectados &rarr; Conectar um dispositivo.
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between p-6 border-t border-gray-200">
+              <button
+                onClick={fetchWhatsAppQr}
+                className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Atualizar QR Code
+              </button>
+              <button
+                onClick={() => setShowWhatsAppModal(false)}
+                className="px-4 py-2 text-sm font-medium text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
+              >
+                Fechar
               </button>
             </div>
           </div>

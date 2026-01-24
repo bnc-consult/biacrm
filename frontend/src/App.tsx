@@ -10,6 +10,7 @@ import Integrations from './pages/Integrations';
 import Appointments from './pages/Appointments';
 import TermsOfService from './pages/TermsOfService';
 import PrivacyPolicy from './pages/PrivacyPolicy';
+import UserDataDeletion from './pages/UserDataDeletion';
 import BNCConsultoria from './pages/BNCConsultoria';
 import Layout from './components/Layout';
 
@@ -36,6 +37,7 @@ function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/terms-of-service" element={<TermsOfService />} />
       <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+      <Route path="/user-data-deletion" element={<UserDataDeletion />} />
       <Route path="/bncconsultoria" element={<BNCConsultoria />} />
       <Route
         path="/"

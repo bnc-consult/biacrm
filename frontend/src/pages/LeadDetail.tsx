@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../services/api';
 import {
@@ -134,6 +134,14 @@ export default function LeadDetail() {
   const [noteText, setNoteText] = useState('');
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
+  const [showWhatsAppPanel, setShowWhatsAppPanel] = useState(false);
+  const [whatsappMessage, setWhatsappMessage] = useState('');
+  const [whatsappFile, setWhatsappFile] = useState<File | null>(null);
+  const [sendingWhatsAppMedia, setSendingWhatsAppMedia] = useState(false);
+  const [whatsappIntegrationActive, setWhatsappIntegrationActive] = useState(false);
+  const [whatsappIntegrationLoadedAt, setWhatsappIntegrationLoadedAt] = useState(0);
+  const [whatsappThread, setWhatsappThread] = useState<{ id: string; text: string; direction: 'out' | 'in'; at: string; mediaUrl?: string | null; mediaType?: string | null }[]>([]);
+  const whatsappChatRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (id && !isNaN(parseInt(id))) {
@@ -142,6 +150,182 @@ export default function LeadDetail() {
       setLoading(false);
     }
   }, [id]);
+
+  const refreshWhatsAppIntegration = () => {
+    let hasActive = false;
+    try {
+      const saved = localStorage.getItem('whatsappIntegrations');
+      if (!saved) {
+        setWhatsappIntegrationActive(false);
+        return false;
+      }
+      const parsed = JSON.parse(saved);
+      hasActive = Array.isArray(parsed) && parsed.some((integration: any) => integration.status === 'active');
+      setWhatsappIntegrationActive(hasActive);
+      setWhatsappIntegrationLoadedAt(Date.now());
+    } catch (e) {
+      console.error('Erro ao ler integração do WhatsApp:', e);
+      setWhatsappIntegrationActive(false);
+      return false;
+    }
+    return hasActive;
+  };
+
+  useEffect(() => {
+    refreshWhatsAppIntegration();
+  }, []);
+
+  useEffect(() => {
+    if (!showWhatsAppPanel || !lead) {
+      return;
+    }
+    const isActive = refreshWhatsAppIntegration();
+    if (!isActive) {
+      return;
+    }
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const loadMessages = () => {
+      api.get('/integrations/whatsapp/messages', {
+        params: { phone: lead.phone }
+      }).then((response) => {
+        const messages = response.data?.messages || [];
+        const normalized = messages.map((msg: any) => ({
+          id: msg.id,
+          text: msg.text,
+          direction: msg.direction,
+          at: msg.at,
+          mediaUrl: msg.mediaUrl || null,
+          mediaType: msg.mediaType || null
+        }));
+        normalized.sort((a: any, b: any) => new Date(a.at).getTime() - new Date(b.at).getTime());
+        setWhatsappThread(normalized);
+        api.post('/integrations/whatsapp/mark-read', { phone: lead.phone }).catch(() => null);
+      }).catch((error) => {
+        console.error('Erro ao carregar mensagens do WhatsApp:', error);
+      });
+    };
+
+    loadMessages();
+    timer = setInterval(loadMessages, 5000);
+
+    return () => {
+      if (timer) {
+        clearInterval(timer);
+      }
+    };
+  }, [showWhatsAppPanel, lead]);
+
+  useEffect(() => {
+    if (!showWhatsAppPanel || !lead) {
+      return;
+    }
+    const isActive = refreshWhatsAppIntegration();
+    if (!isActive) return;
+
+    const token = localStorage.getItem('token') || '';
+    if (!token) return;
+    const streamUrl = `/api/integrations/whatsapp/stream?token=${encodeURIComponent(token)}`;
+    let source: EventSource | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+
+    const getVariants = (digits: string) => {
+      const variants = new Set<string>();
+      if (!digits) return variants;
+      variants.add(digits);
+      if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+        variants.add(digits.slice(2));
+      }
+      if (digits.length === 10 || digits.length === 11) {
+        variants.add(`55${digits}`);
+      }
+      if (digits.length === 11 && digits[2] === '9') {
+        variants.add(`${digits.slice(0, 2)}${digits.slice(3)}`);
+      } else if (digits.length === 10) {
+        variants.add(`${digits.slice(0, 2)}9${digits.slice(2)}`);
+      }
+      return variants;
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (!data || !data.phone) return;
+        const leadDigits = lead.phone ? lead.phone.replace(/\D/g, '') : '';
+        const dataDigits = String(data.phone || '').replace(/\D/g, '');
+        if (!leadDigits || !dataDigits) return;
+        const minLen = Math.min(leadDigits.length, dataDigits.length);
+        if (minLen < 10) return;
+        const leadVariants = getVariants(leadDigits);
+        const dataVariants = getVariants(dataDigits);
+        let matches = false;
+        for (const a of leadVariants) {
+          for (const b of dataVariants) {
+            if (a === b || a.endsWith(b) || b.endsWith(a)) {
+              matches = true;
+              break;
+            }
+          }
+          if (matches) break;
+        }
+        if (!matches) return;
+        setWhatsappThread(prev => {
+          const exists = prev.some(item => item.id === data.id);
+          if (exists) return prev;
+          const next = [
+            ...prev,
+            {
+              id: data.id,
+              text: data.text,
+              direction: data.direction,
+              at: data.at,
+              mediaUrl: data.mediaUrl || null,
+              mediaType: data.mediaType || null
+            }
+          ];
+          next.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+          return next;
+        });
+      } catch (e) {
+        console.warn('Erro ao processar mensagem do WhatsApp:', e);
+      }
+    };
+
+    const connect = () => {
+      if (stopped) return;
+      source = new EventSource(streamUrl);
+      source.addEventListener('message', handleMessage);
+      source.onerror = () => {
+        source?.close();
+        if (stopped) return;
+        if (!retryTimer) {
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            connect();
+          }, 2000);
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      stopped = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+      }
+      source?.close();
+    };
+  }, [showWhatsAppPanel, lead]);
+
+  useEffect(() => {
+    if (!showWhatsAppPanel) return;
+    const node = whatsappChatRef.current;
+    if (node) {
+      node.scrollTop = node.scrollHeight;
+    }
+  }, [showWhatsAppPanel, whatsappThread]);
 
   const parseLeadData = (leadData: any): Lead => {
     // Parse custom_data se for string
@@ -288,9 +472,63 @@ export default function LeadDetail() {
   };
 
   const handleWhatsApp = () => {
-    if (lead) {
-      const message = encodeURIComponent(`Olá ${lead.name}, tudo bem?`);
-      window.open(`https://wa.me/${lead.phone.replace(/\D/g, '')}?text=${message}`, '_blank');
+    if (!lead) return;
+    const isActive = refreshWhatsAppIntegration();
+    setWhatsappMessage(`Olá ${lead.name}, tudo bem?`);
+    setShowWhatsAppPanel(true);
+    if (!isActive) {
+      alert('Integração com o WhatsApp não está ativa. Crie a integração primeiro.');
+    }
+  };
+
+  const handleSendWhatsApp = async () => {
+    if (!lead) return;
+    if (!lead.phone) {
+      alert('Este lead não possui telefone.');
+      return;
+    }
+    const isActive = refreshWhatsAppIntegration();
+    if (!isActive) {
+      alert('Integração com o WhatsApp não está ativa. Crie a integração primeiro.');
+      return;
+    }
+    try {
+      if (whatsappFile) {
+        setSendingWhatsAppMedia(true);
+        const formData = new FormData();
+        formData.append('phone', lead.phone);
+        if (whatsappMessage && whatsappMessage.trim()) {
+          formData.append('message', whatsappMessage.trim());
+        }
+        formData.append('file', whatsappFile);
+        await api.post('/integrations/whatsapp/send-media', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        setWhatsappFile(null);
+        setWhatsappMessage('');
+        return;
+      }
+
+      const text = (whatsappMessage || `Olá ${lead.name}, tudo bem?`).trim();
+      if (!text) {
+        alert('Digite uma mensagem.');
+        return;
+      }
+      await api.post('/integrations/whatsapp/send', {
+        phone: lead.phone,
+        message: text
+      });
+      setWhatsappMessage('');
+    } catch (error) {
+      console.error('Erro ao enviar mensagem no WhatsApp:', error);
+      const status = (error as any)?.response?.status;
+      if (status === 413) {
+        alert('Arquivo muito grande para enviar. Tente um arquivo menor.');
+        return;
+      }
+      alert((error as any)?.response?.data?.message || (error as any)?.message || 'Erro ao enviar mensagem no WhatsApp');
+    } finally {
+      setSendingWhatsAppMedia(false);
     }
   };
 
@@ -580,6 +818,127 @@ export default function LeadDetail() {
                 })}
               </div>
             </div>
+
+            {/* WhatsApp */}
+            {showWhatsAppPanel && (
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-gray-900">WhatsApp</h3>
+                  <button
+                    onClick={() => setShowWhatsAppPanel(false)}
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Fechar"
+                  >
+                    <FiX className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  {!whatsappIntegrationActive && (
+                    <div className="p-3 bg-yellow-50 text-yellow-800 rounded-lg border border-yellow-200 text-xs">
+                      Integração com o WhatsApp não está ativa. Crie a integração primeiro.
+                    </div>
+                  )}
+                  <div className="text-xs text-gray-500">
+                    Última verificação: {whatsappIntegrationLoadedAt ? new Date(whatsappIntegrationLoadedAt).toLocaleString('pt-BR') : '—'}
+                  </div>
+                  <div ref={whatsappChatRef} className="border border-gray-200 rounded-lg p-3 max-h-56 overflow-y-auto bg-gray-50">
+                    {whatsappThread.length === 0 ? (
+                      <div className="text-xs text-gray-500">Nenhuma mensagem enviada ainda.</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {whatsappThread.map(msg => (
+                          <div key={msg.id} className={`flex ${msg.direction === 'out' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`px-3 py-2 rounded-lg text-xs max-w-[80%] ${
+                              msg.direction === 'out' ? 'bg-green-100 text-green-900' : 'bg-gray-200 text-gray-800'
+                            }`}>
+                              {msg.mediaUrl && (
+                                (() => {
+                                  const src = msg.mediaUrl.startsWith('http')
+                                    ? msg.mediaUrl
+                                    : `${window.location.origin}${msg.mediaUrl}`;
+                                  if (msg.mediaType && msg.mediaType.startsWith('image/')) {
+                                    return <img src={src} alt="imagem" className="max-w-full rounded mb-2" />;
+                                  }
+                                  if (msg.mediaType && msg.mediaType.startsWith('video/')) {
+                                    return <video src={src} controls className="max-w-full rounded mb-2" />;
+                                  }
+                                  if (msg.mediaType && msg.mediaType.startsWith('audio/')) {
+                                    return <audio src={src} controls className="w-full mb-2" />;
+                                  }
+                                  return (
+                                    <a href={src} target="_blank" rel="noreferrer" className="underline mb-2 inline-block">
+                                      Baixar arquivo
+                                    </a>
+                                  );
+                                })()
+                              )}
+                              {msg.text && (
+                                <div className="whitespace-pre-wrap">{msg.text}</div>
+                              )}
+                              <div className="text-[10px] text-gray-500 mt-1">
+                                {new Date(msg.at).toLocaleString('pt-BR')}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-2">
+                      Mensagem
+                    </label>
+                    <textarea
+                      value={whatsappMessage}
+                      onChange={(e) => setWhatsappMessage(e.target.value)}
+                      rows={4}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 resize-none text-sm"
+                      placeholder="Digite sua mensagem..."
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="block text-xs font-medium text-gray-700">
+                      Anexo (áudio, vídeo, imagem ou documento)
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/*,video/*,audio/*,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      onChange={(e) => {
+                        const file = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+                        if (!file) {
+                          setWhatsappFile(null);
+                          return;
+                        }
+                        const maxBytes = file.type.startsWith('video/') || file.type.startsWith('image/')
+                          ? 100 * 1024 * 1024
+                          : 2 * 1024 * 1024 * 1024;
+                        if (file.size > maxBytes) {
+                          const limitLabel = maxBytes >= 1024 * 1024 * 1024 ? '2GB' : '100MB';
+                          alert(`Arquivo muito grande. Limite de ${limitLabel}.`);
+                          e.target.value = '';
+                          setWhatsappFile(null);
+                          return;
+                        }
+                        setWhatsappFile(file);
+                      }}
+                      className="w-full text-xs"
+                    />
+                    {whatsappFile && (
+                      <div className="text-xs text-gray-600">
+                        Selecionado: {whatsappFile.name}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={handleSendWhatsApp}
+                    className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+                    disabled={!whatsappIntegrationActive || sendingWhatsAppMedia}
+                  >
+                    {sendingWhatsAppMedia ? 'Enviando mídia...' : 'Enviar no WhatsApp'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
