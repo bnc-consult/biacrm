@@ -8,6 +8,42 @@ import { Readable } from 'stream';
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
+const normalizePhone = (phone: string) => String(phone || '').replace(/\D/g, '');
+const getPhoneVariants = (digits: string) => {
+  const variants = new Set<string>();
+  if (!digits) return variants;
+  variants.add(digits);
+  if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+    variants.add(digits.slice(2));
+  }
+  if (digits.length === 10 || digits.length === 11) {
+    variants.add(`55${digits}`);
+  }
+  if (digits.length === 11 && digits[2] === '9') {
+    variants.add(`${digits.slice(0, 2)}${digits.slice(3)}`);
+  } else if (digits.length === 10) {
+    variants.add(`${digits.slice(0, 2)}9${digits.slice(2)}`);
+  }
+  return variants;
+};
+const isSameLead = (storedPhone: string, leadPhone: string) => {
+  const storedDigits = normalizePhone(storedPhone);
+  const leadDigits = normalizePhone(leadPhone);
+  if (!storedDigits || !leadDigits) return false;
+  if (storedDigits === leadDigits) return true;
+  const minLen = Math.min(storedDigits.length, leadDigits.length);
+  if (minLen < 10) return false;
+  const storedVariants = getPhoneVariants(storedDigits);
+  const leadVariants = getPhoneVariants(leadDigits);
+  for (const a of storedVariants) {
+    for (const b of leadVariants) {
+      if (a === b) return true;
+      if (a.endsWith(b) || b.endsWith(a)) return true;
+    }
+  }
+  return false;
+};
+
 // Get all leads
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   try {
@@ -58,7 +94,58 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       }
       return row;
     });
-    res.json(parsedRows);
+
+    const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
+    let unreadRows: any[] = [];
+    if (req.user && req.user.role === 'admin') {
+      const userIds = Array.from(new Set(parsedRows.map((row: any) => Number(row.user_id)).filter(Boolean)));
+      if (userIds.length > 0) {
+        const placeholders = userIds.map((_, index) => `$${index + 1}`).join(', ');
+        const unreadResult = await query(
+          `SELECT phone, user_id, COUNT(*) as count
+           FROM whatsapp_messages
+           WHERE user_id IN (${placeholders})
+             AND direction = 'in'
+             AND (is_read = 0 OR is_read IS NULL)
+           GROUP BY user_id, phone`,
+          userIds
+        );
+        unreadRows = unreadResult.rows || [];
+      }
+    } else if (currentUserId) {
+      const unreadResult = await query(
+        `SELECT phone, user_id, COUNT(*) as count
+         FROM whatsapp_messages
+         WHERE user_id = $1
+           AND direction = 'in'
+           AND (is_read = 0 OR is_read IS NULL)
+         GROUP BY user_id, phone`,
+        [currentUserId]
+      );
+      unreadRows = unreadResult.rows || [];
+    }
+
+    const unreadByUser = new Map<number, any[]>();
+    unreadRows.forEach((row: any) => {
+      const userId = Number(row.user_id);
+      if (!unreadByUser.has(userId)) {
+        unreadByUser.set(userId, []);
+      }
+      unreadByUser.get(userId)?.push(row);
+    });
+
+    const enrichedRows = parsedRows.map((row: any) => {
+      const rowUserId = row.user_id ? Number(row.user_id) : currentUserId;
+      const candidates = rowUserId ? (unreadByUser.get(rowUserId) || []) : [];
+      let unreadCount = 0;
+      candidates.forEach((messageRow: any) => {
+        if (isSameLead(messageRow.phone || '', row.phone || '')) {
+          unreadCount += Number(messageRow.count || 0);
+        }
+      });
+      return { ...row, unread_count: unreadCount };
+    });
+    res.json(enrichedRows);
   } catch (error: any) {
     console.error('Get leads error:', error);
     res.status(500).json({ message: error.message });

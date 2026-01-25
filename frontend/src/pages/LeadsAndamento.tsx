@@ -30,6 +30,7 @@ interface Lead {
   created_at: string;
   user_name?: string;
   custom_data?: any;
+  unread_count?: number;
 }
 
 // Configuração base das colunas
@@ -99,6 +100,7 @@ function LeadCard({ lead, isDraggingOver }: { lead: Lead; isDraggingOver?: boole
     cursor: isDragging ? 'grabbing' : 'grab',
     pointerEvents: isDragging ? 'none' : 'auto',
   };
+  const unreadCount = lead.unread_count ?? 0;
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -136,12 +138,19 @@ function LeadCard({ lead, isDraggingOver }: { lead: Lead; isDraggingOver?: boole
             <p className="text-xs text-gray-600 mt-2 font-medium">{lead.user_name}</p>
           )}
         </div>
-        <button 
-          className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white hover:bg-blue-700 transition-colors flex-shrink-0"
-          onClick={handleViewLead}
-        >
-          <FiPlay className="w-4 h-4" />
-        </button>
+        <div className="flex flex-col items-center gap-1 flex-shrink-0">
+          <button 
+            className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white hover:bg-blue-700 transition-colors"
+            onClick={handleViewLead}
+          >
+            <FiPlay className="w-4 h-4" />
+          </button>
+          {unreadCount > 0 && (
+            <span className="min-w-[24px] h-6 px-2 mt-1 rounded-full bg-red-500 text-white text-xs font-semibold flex items-center justify-center">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -221,6 +230,7 @@ export default function LeadsAndamento() {
 
   useEffect(() => {
     fetchLeads();
+    const refreshTimer = setInterval(fetchLeads, 5000);
     
     // Atualizar ordem das colunas quando a configuração mudar
     const handleStorageChange = (e: StorageEvent) => {
@@ -248,6 +258,7 @@ export default function LeadsAndamento() {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('funnelOrderChanged', handleCustomStorageChange);
       window.removeEventListener('leadUpdated', handleLeadUpdated);
+      clearInterval(refreshTimer);
     };
   }, []);
 

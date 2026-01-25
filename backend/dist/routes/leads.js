@@ -11,6 +11,48 @@ const csv_parser_1 = __importDefault(require("csv-parser"));
 const stream_1 = require("stream");
 const router = express_1.default.Router();
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
+const normalizePhone = (phone) => String(phone || '').replace(/\D/g, '');
+const getPhoneVariants = (digits) => {
+    const variants = new Set();
+    if (!digits)
+        return variants;
+    variants.add(digits);
+    if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+        variants.add(digits.slice(2));
+    }
+    if (digits.length === 10 || digits.length === 11) {
+        variants.add(`55${digits}`);
+    }
+    if (digits.length === 11 && digits[2] === '9') {
+        variants.add(`${digits.slice(0, 2)}${digits.slice(3)}`);
+    }
+    else if (digits.length === 10) {
+        variants.add(`${digits.slice(0, 2)}9${digits.slice(2)}`);
+    }
+    return variants;
+};
+const isSameLead = (storedPhone, leadPhone) => {
+    const storedDigits = normalizePhone(storedPhone);
+    const leadDigits = normalizePhone(leadPhone);
+    if (!storedDigits || !leadDigits)
+        return false;
+    if (storedDigits === leadDigits)
+        return true;
+    const minLen = Math.min(storedDigits.length, leadDigits.length);
+    if (minLen < 10)
+        return false;
+    const storedVariants = getPhoneVariants(storedDigits);
+    const leadVariants = getPhoneVariants(leadDigits);
+    for (const a of storedVariants) {
+        for (const b of leadVariants) {
+            if (a === b)
+                return true;
+            if (a.endsWith(b) || b.endsWith(a))
+                return true;
+        }
+    }
+    return false;
+};
 // Get all leads
 router.get('/', auth_1.authenticate, async (req, res) => {
     try {
@@ -57,7 +99,50 @@ router.get('/', auth_1.authenticate, async (req, res) => {
             }
             return row;
         });
-        res.json(parsedRows);
+        const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
+        let unreadRows = [];
+        if (req.user && req.user.role === 'admin') {
+            const userIds = Array.from(new Set(parsedRows.map((row) => Number(row.user_id)).filter(Boolean)));
+            if (userIds.length > 0) {
+                const placeholders = userIds.map((_, index) => `$${index + 1}`).join(', ');
+                const unreadResult = await (0, connection_1.query)(`SELECT phone, user_id, COUNT(*) as count
+           FROM whatsapp_messages
+           WHERE user_id IN (${placeholders})
+             AND direction = 'in'
+             AND (is_read = 0 OR is_read IS NULL)
+           GROUP BY user_id, phone`, userIds);
+                unreadRows = unreadResult.rows || [];
+            }
+        }
+        else if (currentUserId) {
+            const unreadResult = await (0, connection_1.query)(`SELECT phone, user_id, COUNT(*) as count
+         FROM whatsapp_messages
+         WHERE user_id = $1
+           AND direction = 'in'
+           AND (is_read = 0 OR is_read IS NULL)
+         GROUP BY user_id, phone`, [currentUserId]);
+            unreadRows = unreadResult.rows || [];
+        }
+        const unreadByUser = new Map();
+        unreadRows.forEach((row) => {
+            const userId = Number(row.user_id);
+            if (!unreadByUser.has(userId)) {
+                unreadByUser.set(userId, []);
+            }
+            unreadByUser.get(userId)?.push(row);
+        });
+        const enrichedRows = parsedRows.map((row) => {
+            const rowUserId = row.user_id ? Number(row.user_id) : currentUserId;
+            const candidates = rowUserId ? (unreadByUser.get(rowUserId) || []) : [];
+            let unreadCount = 0;
+            candidates.forEach((messageRow) => {
+                if (isSameLead(messageRow.phone || '', row.phone || '')) {
+                    unreadCount += Number(messageRow.count || 0);
+                }
+            });
+            return { ...row, unread_count: unreadCount };
+        });
+        res.json(enrichedRows);
     }
     catch (error) {
         console.error('Get leads error:', error);

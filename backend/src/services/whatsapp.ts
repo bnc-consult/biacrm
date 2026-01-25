@@ -32,6 +32,7 @@ const MAX_MESSAGES_PER_USER = 300;
 const lidToJid = new Map<string, string>();
 const lidToPhone = new Map<string, string>();
 const lastOutboundPhoneByUser = new Map<string, string>();
+const FINAL_STATUSES = new Set(['finalizado']);
 
 const normalizePhone = (phone: string) => phone.replace(/\D/g, '');
 const getPhoneVariants = (digits: string) => {
@@ -173,6 +174,85 @@ const storeMessage = (userId: string, event: WhatsAppMessageEvent) => {
     list.length = MAX_MESSAGES_PER_USER;
   }
   messageStore.set(userId, list);
+};
+
+const updateLeadStatusFromWhatsApp = async (userId: string, phone: string, direction: 'in' | 'out') => {
+  const digits = normalizePhone(phone);
+  if (!digits) return;
+  try {
+    const leadsResult = await query(
+      `SELECT id, status, phone, custom_data FROM leads WHERE user_id = $1`,
+      [Number(userId)]
+    );
+    const leads = leadsResult.rows || [];
+    const lead = leads.find((row: any) => isSameLead(row.phone || '', digits));
+    if (!lead) return;
+    if (FINAL_STATUSES.has(lead.status)) return;
+
+    const messagesResult = await query(
+      `SELECT phone, direction FROM whatsapp_messages
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 500`,
+      [Number(userId)]
+    );
+    const relevant = (messagesResult.rows || []).filter((row: any) => isSameLead(row.phone || '', digits));
+    const hasIn = relevant.some((row: any) => row.direction === 'in') || direction === 'in';
+    const hasOut = relevant.some((row: any) => row.direction === 'out') || direction === 'out';
+
+    let targetStatus: string | null = null;
+    if (hasOut) {
+      targetStatus = 'em_contato';
+    } else if (hasIn) {
+      targetStatus = 'novo_lead';
+    }
+
+    if (!targetStatus || lead.status === targetStatus) return;
+
+    let customData = lead.custom_data;
+    if (customData && typeof customData === 'string') {
+      try {
+        customData = JSON.parse(customData);
+      } catch (error) {
+        customData = {};
+      }
+    }
+    const shouldClearDisplayStatus = (targetStatus === 'novo_lead' || targetStatus === 'em_contato')
+      && customData
+      && typeof customData === 'object'
+      && customData.displayStatus;
+
+    if (shouldClearDisplayStatus) {
+      const updatedCustomData = { ...customData };
+      delete updatedCustomData.displayStatus;
+      try {
+        await query(
+          `UPDATE leads SET status = $1, custom_data = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3`,
+          [targetStatus, JSON.stringify(updatedCustomData), lead.id]
+        );
+      } catch (error) {
+        await query(
+          `UPDATE leads SET status = $1, custom_data = $2 WHERE id = $3`,
+          [targetStatus, JSON.stringify(updatedCustomData), lead.id]
+        );
+      }
+      return;
+    }
+
+    try {
+      await query(
+        `UPDATE leads SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+        [targetStatus, lead.id]
+      );
+    } catch (error) {
+      await query(
+        `UPDATE leads SET status = $1 WHERE id = $2`,
+        [targetStatus, lead.id]
+      );
+    }
+  } catch (error) {
+    console.warn('WhatsApp lead status update failed:', error);
+  }
 };
 
 const extractLidJid = (record: any) => {
@@ -474,6 +554,7 @@ const createSession = async (userId: string) => {
     storeMessage(userId, event);
     void saveMessage(userId, event);
     emitMessage(userId, event);
+    void updateLeadStatusFromWhatsApp(userId, normalizedPhone, event.direction);
   };
 
   socket.ev.on('messages.upsert', (m: any) => {
@@ -617,6 +698,7 @@ export const sendWhatsAppMessage = async (userId: string, phone: string, message
   storeMessage(userId, event);
   void saveMessage(userId, event);
   emitMessage(userId, event);
+  void updateLeadStatusFromWhatsApp(userId, digits, 'out');
 };
 
 export const sendWhatsAppMedia = async (
@@ -689,6 +771,7 @@ export const sendWhatsAppMedia = async (
   storeMessage(userId, event);
   void saveMessage(userId, event);
   emitMessage(userId, event);
+  void updateLeadStatusFromWhatsApp(userId, digits, 'out');
 };
 
 export const subscribeWhatsAppMessages = (userId: string, cb: (event: WhatsAppMessageEvent) => void) => {
