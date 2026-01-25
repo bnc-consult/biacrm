@@ -62,6 +62,7 @@ const initializeDatabase = async () => {
           custom_data TEXT DEFAULT '{}',
           tags TEXT DEFAULT '[]',
           notes TEXT,
+          deleted_at DATETIME,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
@@ -151,6 +152,12 @@ const initializeDatabase = async () => {
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_user_id ON whatsapp_messages(user_id)`);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone ON whatsapp_messages(phone)`);
             try {
+                connection_1.db.exec(`ALTER TABLE leads ADD COLUMN deleted_at DATETIME`);
+            }
+            catch (error) {
+                // Column already exists
+            }
+            try {
                 connection_1.db.exec(`ALTER TABLE whatsapp_messages ADD COLUMN media_url TEXT`);
             }
             catch (error) {
@@ -212,6 +219,7 @@ const initializeDatabase = async () => {
           custom_data JSONB DEFAULT '{}',
           tags TEXT[] DEFAULT '{}',
           notes TEXT,
+          deleted_at TIMESTAMP,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -300,6 +308,12 @@ const initializeDatabase = async () => {
       `);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_user_id ON whatsapp_messages(user_id)`);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone ON whatsapp_messages(phone)`);
+            try {
+                await connection_1.pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);
+            }
+            catch (error) {
+                // Column already exists or table not created yet
+            }
             try {
                 await connection_1.pool.query(`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS media_url TEXT`);
                 await connection_1.pool.query(`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS media_type TEXT`);

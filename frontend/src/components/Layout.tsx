@@ -503,8 +503,20 @@ export default function Layout() {
 
           {/* Right: Icons and User */}
           <div className="flex items-center space-x-4">
-            <button className="text-gray-700 hover:text-gray-900">
+            <button
+              className="relative text-gray-700 hover:text-gray-900"
+              onClick={() => {
+                refreshWhatsAppIntegration();
+                setShowConversationsModal(true);
+              }}
+              title="Conversas"
+            >
               <FiEye className="w-5 h-5" />
+              {totalUnreadConversations > 0 && (
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-xs text-white flex items-center justify-center">
+                  {totalUnreadConversations > 99 ? '99+' : totalUnreadConversations}
+                </span>
+              )}
             </button>
             <button 
               onClick={() => setShowNotificationsModal(true)}

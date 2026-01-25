@@ -48,10 +48,17 @@ const createTables = async () => {
           custom_data TEXT DEFAULT '{}',
           tags TEXT DEFAULT '[]',
           notes TEXT,
+          deleted_at DATETIME,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
+            try {
+                connection_1.db.exec(`ALTER TABLE leads ADD COLUMN deleted_at DATETIME`);
+            }
+            catch (error) {
+                // Column already exists
+            }
             // Lead history table
             connection_1.db.exec(`
         CREATE TABLE IF NOT EXISTS lead_history (
@@ -117,10 +124,17 @@ const createTables = async () => {
           custom_data JSONB DEFAULT '{}',
           tags TEXT[] DEFAULT '{}',
           notes TEXT,
+          deleted_at TIMESTAMP,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
+            try {
+                await connection_1.pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);
+            }
+            catch (error) {
+                // Column already exists or table not created yet
+            }
             // Lead history table
             await connection_1.pool.query(`
         CREATE TABLE IF NOT EXISTS lead_history (

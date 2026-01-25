@@ -48,7 +48,7 @@ const isSameLead = (storedPhone: string, leadPhone: string) => {
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   try {
     const { status, search, origin } = req.query;
-    let sql = 'SELECT l.*, u.name as user_name FROM leads l LEFT JOIN users u ON l.user_id = u.id WHERE 1=1';
+    let sql = 'SELECT l.*, u.name as user_name FROM leads l LEFT JOIN users u ON l.user_id = u.id WHERE l.deleted_at IS NULL';
     const params: any[] = [];
 
     if (status) {
@@ -158,7 +158,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
     const { id } = req.params;
 
     const leadResult = await query(
-      'SELECT l.*, u.name as user_name FROM leads l LEFT JOIN users u ON l.user_id = u.id WHERE l.id = ?',
+      'SELECT l.*, u.name as user_name FROM leads l LEFT JOIN users u ON l.user_id = u.id WHERE l.id = ? AND l.deleted_at IS NULL',
       [id]
     );
 
@@ -253,7 +253,7 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     const { name, phone, email, status, origin, custom_data, tags, notes } = req.body;
 
     // Get current lead
-    const currentResult = await query('SELECT * FROM leads WHERE id = ?', [id]);
+    const currentResult = await query('SELECT * FROM leads WHERE id = ? AND deleted_at IS NULL', [id]);
     if (currentResult.rows.length === 0) {
       return res.status(404).json({ message: 'Lead não encontrado' });
     }
@@ -349,14 +349,27 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
-    const result = await query('SELECT * FROM leads WHERE id = ?', [id]);
-    await query('DELETE FROM leads WHERE id = ?', [id]);
-
+    const result = await query('SELECT * FROM leads WHERE id = ? AND deleted_at IS NULL', [id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Lead não encontrado' });
     }
+    try {
+      await query(
+        'UPDATE leads SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [id]
+      );
+    } catch (error) {
+      await query(
+        'UPDATE leads SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [id]
+      );
+    }
+    await query(
+      'INSERT INTO lead_history (lead_id, user_id, action, description) VALUES (?, ?, ?, ?)',
+      [id, (req.user && req.user.id), 'deleted', 'Lead excluído (lógico)']
+    );
 
-    res.json({ message: 'Lead deletado com sucesso' });
+    res.json({ message: 'Lead excluído com sucesso' });
   } catch (error: any) {
     console.error('Delete lead error:', error);
     res.status(500).json({ message: error.message });

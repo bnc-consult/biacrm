@@ -45,6 +45,7 @@ interface Lead {
   created_at: string;
   isNew?: boolean;
   custom_data?: any;
+  unread_count?: number;
 }
 
 // Função para obter o status de exibição baseado no status do backend e displayStatus
@@ -411,7 +412,25 @@ export default function Leads() {
 
   useEffect(() => {
     fetchLeads();
+    const refreshTimer = setInterval(fetchLeads, 5000);
+
+    const handleLeadUpdated = () => {
+      fetchLeads();
+    };
+    window.addEventListener('leadUpdated', handleLeadUpdated);
+
+    return () => {
+      clearInterval(refreshTimer);
+      window.removeEventListener('leadUpdated', handleLeadUpdated);
+    };
   }, []);
+
+  const isRecentLead = (createdAt: string, hours = 24) => {
+    const createdDate = parseLeadDate(createdAt);
+    if (Number.isNaN(createdDate.getTime())) return false;
+    const diffMs = Date.now() - createdDate.getTime();
+    return diffMs >= 0 && diffMs <= hours * 60 * 60 * 1000;
+  };
 
   const fetchLeads = async () => {
     try {
@@ -419,7 +438,7 @@ export default function Leads() {
       const leadsData = response.data.map((lead: any) => ({
         ...lead,
         custom_data: parseCustomData(lead.custom_data),
-        isNew: Math.random() > 0.3, // Simular alguns leads novos
+        isNew: lead.status === 'novo_lead' && isRecentLead(lead.created_at),
       }));
       setLeads(leadsData);
     } catch (error) {
@@ -478,18 +497,52 @@ export default function Leads() {
     }
   };
 
+  const handleDeleteLead = async (lead: Lead) => {
+    const confirmed = window.confirm('Tem certeza que deseja excluir este lead?');
+    if (!confirmed) return;
+    try {
+      await api.delete(`/leads/${lead.id}`);
+      setLeads(prev => prev.filter(item => item.id !== lead.id));
+      setSelectedLeads(prev => prev.filter(id => id !== lead.id));
+    } catch (error) {
+      console.error('Erro ao excluir lead:', error);
+    }
+  };
+
+  const getUserTimeZone = () => {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  };
+
+  const parseLeadDate = (dateString: string) => {
+    if (!dateString) return new Date(NaN);
+    const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(dateString);
+    if (hasTimezone) {
+      return new Date(dateString);
+    }
+    const normalized = dateString.includes('T')
+      ? dateString
+      : dateString.replace(' ', 'T');
+    return new Date(`${normalized}Z`);
+  };
+
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    const months = [
-      'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
-      'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'
-    ];
-    const day = date.getDate();
-    const month = months[date.getMonth()];
-    const year = date.getFullYear();
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    return `${day} ${month} ${year}, ${hours}:${minutes}`;
+    const date = parseLeadDate(dateString);
+    if (Number.isNaN(date.getTime())) return dateString;
+    const formatter = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: getUserTimeZone(),
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    const parts = formatter.formatToParts(date);
+    const day = parts.find(part => part.type === 'day')?.value || '';
+    const month = parts.find(part => part.type === 'month')?.value || '';
+    const year = parts.find(part => part.type === 'year')?.value || '';
+    const hour = parts.find(part => part.type === 'hour')?.value || '';
+    const minute = parts.find(part => part.type === 'minute')?.value || '';
+    return `${day} ${month} ${year}, ${hour}:${minute}`;
   };
 
   const handleSort = (column: string) => {
@@ -561,6 +614,26 @@ export default function Leads() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-gray-700">Carregando leads...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (filteredLeads.length === 0) {
+    const title = searchTerm.trim()
+      ? 'Nenhum lead encontrado'
+      : 'Nenhum lead cadastrado';
+    const description = searchTerm.trim()
+      ? 'Tente ajustar o filtro de pesquisa ou limpar a busca.'
+      : 'Cadastre um novo lead para começar a acompanhar o funil.';
+    return (
+      <div className="p-8 bg-gray-50 min-h-full flex items-center justify-center">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 text-center w-full max-w-md">
+          <div className="mx-auto w-14 h-14 rounded-full bg-blue-50 flex items-center justify-center mb-4">
+            <FiSearch className="w-6 h-6 text-blue-600" />
+          </div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
+          <p className="text-sm text-gray-500">{description}</p>
         </div>
       </div>
     );
@@ -698,6 +771,7 @@ export default function Leads() {
               {filteredLeads.map((lead) => {
                 const displayStatus = getDisplayStatus(lead);
                 const status = statusConfig[displayStatus] || statusConfig.sem_atendimento;
+                const unreadCount = lead.unread_count ?? 0;
                 return (
                   <tr key={lead.id} className="hover:bg-gray-50">
                     {columns.map((column: TableColumn) => {
@@ -748,7 +822,7 @@ export default function Leads() {
                               <span className={`px-3 py-1 rounded-full text-xs font-medium ${status.bgColor} ${status.textColor}`}>
                                 {status.label}
                               </span>
-                              {lead.isNew && (
+                              {lead.isNew && displayStatus === 'sem_atendimento' && (
                                 <span className="px-2 py-0.5 bg-yellow-200 text-yellow-800 text-xs font-medium rounded">
                                   Novo!
                                 </span>
@@ -775,6 +849,18 @@ export default function Leads() {
                               >
                                 <FiEdit className="w-5 h-5" />
                               </button>
+                              <button
+                                onClick={() => handleDeleteLead(lead)}
+                                className="text-red-600 hover:text-red-700"
+                                title="Excluir"
+                              >
+                                <FiTrash2 className="w-5 h-5" />
+                              </button>
+                              {unreadCount > 0 && (
+                                <span className="min-w-[20px] h-5 px-1.5 ml-3 rounded-full bg-red-500 text-white text-[11px] font-semibold flex items-center justify-center">
+                                  {unreadCount > 99 ? '99+' : unreadCount}
+                                </span>
+                              )}
                             </div>
                           </td>
                         );

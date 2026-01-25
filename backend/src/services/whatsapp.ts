@@ -89,6 +89,66 @@ const isSameLead = (storedPhone: string, leadPhone: string) => {
   return false;
 };
 
+const getIncomingLeadName = (message: any) => {
+  const rawName = [
+    message?.pushName,
+    message?.notifyName,
+    message?.verifiedBizName,
+    message?.name
+  ]
+    .find(value => typeof value === 'string' && value.trim().length > 0);
+  if (!rawName || typeof rawName !== 'string') return null;
+  return rawName.trim();
+};
+
+const ensureLeadForIncomingMessage = async (userId: string, phone: string, leadName?: string | null) => {
+  const digits = normalizePhone(phone);
+  if (!digits) return;
+  try {
+    const leadsResult = await query(
+      `SELECT id, phone FROM leads WHERE user_id = $1 AND deleted_at IS NULL`,
+      [Number(userId)]
+    );
+    const leads = leadsResult.rows || [];
+    const exists = leads.some((row: any) => isSameLead(row.phone || '', digits));
+    if (exists) return;
+
+    const name = leadName && leadName.trim().length > 0
+      ? leadName.trim()
+      : `WhatsApp ${digits}`;
+    const storedPhone = formatSendPhone(digits);
+    const result = await query(
+      `INSERT INTO leads (name, phone, status, origin, user_id, custom_data, tags)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        name,
+        storedPhone,
+        'novo_lead',
+        'whatsapp',
+        Number(userId),
+        JSON.stringify({}),
+        JSON.stringify([])
+      ]
+    );
+    const insertedId = (result.rows[0] && result.rows[0].lastInsertRowid)
+      || (result.rows[0] && result.rows[0].id);
+    if (insertedId) {
+      console.info('WhatsApp lead auto-created', {
+        userId: Number(userId),
+        leadId: insertedId,
+        phone: storedPhone,
+        name
+      });
+      await query(
+        'INSERT INTO lead_history (lead_id, user_id, action, description) VALUES ($1, $2, $3, $4)',
+        [insertedId, Number(userId), 'created', 'Lead criado automaticamente via WhatsApp']
+      );
+    }
+  } catch (error) {
+    console.warn('WhatsApp lead auto-create failed:', error);
+  }
+};
+
 const getExtensionFromMime = (mimetype?: string | null) => {
   if (!mimetype) return 'bin';
   if (mimetype === 'image/jpeg') return 'jpg';
@@ -181,7 +241,7 @@ const updateLeadStatusFromWhatsApp = async (userId: string, phone: string, direc
   if (!digits) return;
   try {
     const leadsResult = await query(
-      `SELECT id, status, phone, custom_data FROM leads WHERE user_id = $1`,
+      `SELECT id, status, phone, custom_data FROM leads WHERE user_id = $1 AND deleted_at IS NULL`,
       [Number(userId)]
     );
     const leads = leadsResult.rows || [];
@@ -201,7 +261,7 @@ const updateLeadStatusFromWhatsApp = async (userId: string, phone: string, direc
     const hasOut = relevant.some((row: any) => row.direction === 'out') || direction === 'out';
 
     let targetStatus: string | null = null;
-    if (hasOut) {
+    if (hasIn && hasOut) {
       targetStatus = 'em_contato';
     } else if (hasIn) {
       targetStatus = 'novo_lead';
@@ -554,6 +614,9 @@ const createSession = async (userId: string) => {
     storeMessage(userId, event);
     void saveMessage(userId, event);
     emitMessage(userId, event);
+    if (!fromMe) {
+      await ensureLeadForIncomingMessage(userId, normalizedPhone, getIncomingLeadName(message));
+    }
     void updateLeadStatusFromWhatsApp(userId, normalizedPhone, event.direction);
   };
 
@@ -818,7 +881,7 @@ export const getWhatsAppMessages = async (userId: string, phone: string) => {
 
 export const getWhatsAppConversations = async (userId: string) => {
   const leadsResult = await query(
-    `SELECT id, name, phone FROM leads WHERE user_id = $1`,
+    `SELECT id, name, phone FROM leads WHERE user_id = $1 AND deleted_at IS NULL`,
     [Number(userId)]
   );
   const leads = leadsResult.rows || [];
