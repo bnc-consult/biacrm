@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import {
@@ -21,7 +21,6 @@ import {
   FiUpload, 
   FiFilter, 
   FiDownload, 
-  FiSettings,
   FiEye,
   FiChevronUp,
   FiChevronDown,
@@ -203,6 +202,18 @@ export default function Leads() {
   const [showImportOptions, setShowImportOptions] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [showFiltersModal, setShowFiltersModal] = useState(false);
+  const [filters, setFilters] = useState({
+    name: '',
+    phone: '',
+    product: '',
+    status: '',
+    createdFrom: '',
+    createdTo: '',
+  });
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
   
   // Estados para o modal de cadastro de Lead
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
@@ -425,6 +436,16 @@ export default function Leads() {
     };
   }, []);
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showExportMenu && exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showExportMenu]);
+
   const isRecentLead = (createdAt: string, hours = 24) => {
     const createdDate = parseLeadDate(createdAt);
     if (Number.isNaN(createdDate.getTime())) return false;
@@ -525,6 +546,22 @@ export default function Leads() {
     return new Date(`${normalized}Z`);
   };
 
+  const handleDeleteSelectedLeads = async () => {
+    if (selectedLeads.length === 0 || isBulkDeleting) return;
+    const confirmed = window.confirm('Tem certeza que deseja excluir os leads selecionados?');
+    if (!confirmed) return;
+    setIsBulkDeleting(true);
+    try {
+      await Promise.all(selectedLeads.map((leadId) => api.delete(`/leads/${leadId}`)));
+      setLeads(prev => prev.filter(item => !selectedLeads.includes(item.id)));
+      setSelectedLeads([]);
+    } catch (error) {
+      console.error('Erro ao excluir leads selecionados:', error);
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     const date = parseLeadDate(dateString);
     if (Number.isNaN(date.getTime())) return dateString;
@@ -543,6 +580,82 @@ export default function Leads() {
     const hour = parts.find(part => part.type === 'hour')?.value || '';
     const minute = parts.find(part => part.type === 'minute')?.value || '';
     return `${day} ${month} ${year}, ${hour}:${minute}`;
+  };
+
+  const isWithinDateRange = (createdAt: string) => {
+    if (!filters.createdFrom && !filters.createdTo) return true;
+    const createdDate = parseLeadDate(createdAt);
+    if (Number.isNaN(createdDate.getTime())) return false;
+    if (filters.createdFrom) {
+      const fromDate = new Date(`${filters.createdFrom}T00:00:00`);
+      if (createdDate < fromDate) return false;
+    }
+    if (filters.createdTo) {
+      const toDate = new Date(`${filters.createdTo}T23:59:59`);
+      if (createdDate > toDate) return false;
+    }
+    return true;
+  };
+
+  const getExportRows = (data: Lead[]) => {
+    return data.map((lead) => {
+      const displayStatus = getDisplayStatus(lead);
+      const statusLabel = statusConfig[displayStatus]?.label || displayStatus;
+      return {
+        Nome: lead.name,
+        Telefone: lead.phone,
+        Produto: lead.product || '--',
+        'Criado em': formatDate(lead.created_at),
+        Status: statusLabel
+      };
+    });
+  };
+
+  const downloadBlob = (content: BlobPart, filename: string, type: string) => {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportCSV = () => {
+    const rows = getExportRows(filteredLeads);
+    const headers = Object.keys(rows[0] || {});
+    const escapeValue = (value: string) => `"${String(value).replace(/"/g, '""')}"`;
+    const csv = [
+      headers.join(','),
+      ...rows.map((row) => headers.map((header) => escapeValue((row as any)[header] ?? '')).join(','))
+    ].join('\n');
+    downloadBlob(csv, 'leads.csv', 'text/csv;charset=utf-8;');
+  };
+
+  const exportXLSX = async () => {
+    const rows = getExportRows(filteredLeads);
+    const XLSX = await import('xlsx');
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Leads');
+    XLSX.writeFile(workbook, 'leads.xlsx');
+  };
+
+  const exportPDF = async () => {
+    const rows = getExportRows(filteredLeads);
+    const headers = Object.keys(rows[0] || {});
+    const body = rows.map((row) => headers.map((header) => (row as any)[header]));
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable')
+    ]);
+    const doc = new jsPDF({ orientation: 'landscape' });
+    (autoTable as any)(doc, {
+      head: [headers],
+      body,
+      styles: { fontSize: 9 }
+    });
+    doc.save('leads.pdf');
   };
 
   const handleSort = (column: string) => {
@@ -577,11 +690,23 @@ export default function Leads() {
     }
   });
 
-  const filteredLeads = sortedLeads.filter(lead =>
-    lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    lead.phone.includes(searchTerm) ||
-    (lead.email && lead.email.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const filteredLeads = sortedLeads.filter(lead => {
+    const normalizedSearch = searchTerm.toLowerCase();
+    const matchesSearch = !normalizedSearch
+      || lead.name.toLowerCase().includes(normalizedSearch)
+      || lead.phone.includes(normalizedSearch)
+      || (lead.email && lead.email.toLowerCase().includes(normalizedSearch));
+    if (!matchesSearch) return false;
+
+    const displayStatus = getDisplayStatus(lead);
+    const matchesName = !filters.name || lead.name.toLowerCase().includes(filters.name.toLowerCase());
+    const matchesPhone = !filters.phone || lead.phone.includes(filters.phone);
+    const matchesProduct = !filters.product || (lead.product || '').toLowerCase().includes(filters.product.toLowerCase());
+    const matchesStatus = !filters.status || displayStatus === filters.status;
+    const matchesDate = isWithinDateRange(lead.created_at);
+
+    return matchesName && matchesPhone && matchesProduct && matchesStatus && matchesDate;
+  });
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -661,6 +786,15 @@ export default function Leads() {
               <FiList className="w-4 h-4" />
               <span>Ordem</span>
             </button>
+            <button
+              onClick={handleDeleteSelectedLeads}
+              disabled={selectedLeads.length === 0 || isBulkDeleting}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Excluir leads selecionados"
+            >
+              <FiTrash2 className="w-4 h-4" />
+              <span>{isBulkDeleting ? 'Excluindo...' : 'Excluir Selecionados'}</span>
+            </button>
             <button 
               onClick={() => setShowAddLeadModal(true)}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -675,16 +809,53 @@ export default function Leads() {
               <FiUpload className="w-4 h-4" />
               <span>Importações</span>
             </button>
-            <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            <button
+              onClick={() => setShowFiltersModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
               <FiFilter className="w-4 h-4" />
               <span>Filtros</span>
             </button>
-            <button className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-              <FiDownload className="w-4 h-4" />
-            </button>
-            <button className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-              <FiSettings className="w-4 h-4" />
-            </button>
+            <div ref={exportMenuRef} className="relative">
+              <button
+                onClick={() => setShowExportMenu((prev) => !prev)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                <FiDownload className="w-4 h-4" />
+                <span>Exportação</span>
+              </button>
+              {showExportMenu && (
+                <div className="absolute right-0 mt-2 w-40 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+                  <button
+                    onClick={() => {
+                      exportXLSX();
+                      setShowExportMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    XLSX
+                  </button>
+                  <button
+                    onClick={() => {
+                      exportCSV();
+                      setShowExportMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    CSV
+                  </button>
+                  <button
+                    onClick={() => {
+                      exportPDF();
+                      setShowExportMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    PDF
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -988,6 +1159,105 @@ export default function Leads() {
                 className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
               >
                 Importar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Filtros */}
+      {showFiltersModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">Filtros</h2>
+              <button
+                onClick={() => setShowFiltersModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <FiX className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-1 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+                  <input
+                    type="text"
+                    value={filters.name}
+                    onChange={(e) => setFilters(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Telefone</label>
+                  <input
+                    type="text"
+                    value={filters.phone}
+                    onChange={(e) => setFilters(prev => ({ ...prev, phone: e.target.value }))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Produto</label>
+                  <input
+                    type="text"
+                    value={filters.product}
+                    onChange={(e) => setFilters(prev => ({ ...prev, product: e.target.value }))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                  <select
+                    value={filters.status}
+                    onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Todos</option>
+                    {statusOptions.map((status) => (
+                      <option key={status.id} value={status.id}>
+                        {status.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Criado a partir de</label>
+                    <input
+                      type="date"
+                      value={filters.createdFrom}
+                      onChange={(e) => setFilters(prev => ({ ...prev, createdFrom: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Criado até</label>
+                    <input
+                      type="date"
+                      value={filters.createdTo}
+                      onChange={(e) => setFilters(prev => ({ ...prev, createdTo: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200">
+              <button
+                onClick={() =>
+                  setFilters({ name: '', phone: '', product: '', status: '', createdFrom: '', createdTo: '' })
+                }
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+              >
+                Limpar
+              </button>
+              <button
+                onClick={() => setShowFiltersModal(false)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Aplicar
               </button>
             </div>
           </div>

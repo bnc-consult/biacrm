@@ -16,11 +16,14 @@
     "@syncfusion/ej2-charts": "^31.2.5",
     "@syncfusion/ej2-react-charts": "^31.2.5",
     "axios": "^1.6.2",
+    "jspdf": "^4.0.0",
+    "jspdf-autotable": "^5.0.7",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-icons": "^4.12.0",
     "react-router-dom": "^6.21.1",
-    "recharts": "^2.10.3"
+    "recharts": "^2.10.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
