@@ -8,6 +8,7 @@ const path_1 = __importDefault(require("path"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const connection_1 = require("./database/connection");
+const whatsapp_1 = require("./services/whatsapp");
 const auth_1 = __importDefault(require("./routes/auth"));
 const leads_1 = __importDefault(require("./routes/leads"));
 const dashboard_1 = __importDefault(require("./routes/dashboard"));
@@ -16,6 +17,9 @@ const integrations_1 = __importDefault(require("./routes/integrations"));
 const tiktok_1 = __importDefault(require("./routes/tiktok"));
 const facebook_1 = __importDefault(require("./routes/facebook"));
 const instagram_1 = __importDefault(require("./routes/instagram"));
+const ai_1 = __importDefault(require("./routes/ai"));
+const appointments_1 = __importDefault(require("./routes/appointments"));
+const company_1 = __importDefault(require("./routes/company"));
 dotenv_1.default.config();
 // Initialize database tables on startup
 const initializeDatabase = async () => {
@@ -24,14 +28,43 @@ const initializeDatabase = async () => {
             // SQLite - create tables if they don't exist
             console.log('Initializing SQLite database...');
             connection_1.db.exec(`
+        CREATE TABLE IF NOT EXISTS companies (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          email TEXT NOT NULL,
+          plan_type TEXT NOT NULL DEFAULT 'starter' CHECK (plan_type IN ('starter', 'pro', 'scale')),
+          plan_active INTEGER DEFAULT 1,
+          max_collaborators INTEGER DEFAULT 2,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            connection_1.db.exec(`
         CREATE TABLE IF NOT EXISTS users (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name TEXT NOT NULL,
           email TEXT UNIQUE NOT NULL,
           password TEXT NOT NULL,
           role TEXT DEFAULT 'atendente' CHECK (role IN ('admin', 'gestor', 'atendente')),
+          company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            try {
+                connection_1.db.exec(`ALTER TABLE users ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL`);
+            }
+            catch (error) {
+                // Column already exists
+            }
+            connection_1.db.exec(`
+        CREATE TABLE IF NOT EXISTS email_verification_codes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          email TEXT NOT NULL,
+          code TEXT NOT NULL,
+          purpose TEXT NOT NULL DEFAULT 'register',
+          expires_at DATETIME NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
             connection_1.db.exec(`
@@ -134,6 +167,27 @@ const initializeDatabase = async () => {
       `);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_instagram_integrations_user_id ON instagram_integrations(user_id)`);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_instagram_integrations_account_id ON instagram_integrations(instagram_account_id)`);
+            // OpenAI Integrations table
+            connection_1.db.exec(`
+        CREATE TABLE IF NOT EXISTS openai_integrations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          api_key TEXT NOT NULL,
+          model TEXT,
+          provider TEXT DEFAULT 'openai',
+          status TEXT DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_openai_integrations_user_id ON openai_integrations(user_id)`);
+            try {
+                connection_1.db.exec(`ALTER TABLE openai_integrations ADD COLUMN provider TEXT DEFAULT 'openai'`);
+            }
+            catch (error) {
+                // Column already exists
+            }
             // WhatsApp Messages table
             connection_1.db.exec(`
         CREATE TABLE IF NOT EXISTS whatsapp_messages (
@@ -151,6 +205,24 @@ const initializeDatabase = async () => {
       `);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_user_id ON whatsapp_messages(user_id)`);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone ON whatsapp_messages(phone)`);
+            connection_1.db.exec(`
+        CREATE TABLE IF NOT EXISTS scheduled_messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+          phone TEXT NOT NULL,
+          message TEXT NOT NULL,
+          scheduled_for DATETIME NOT NULL,
+          status TEXT DEFAULT 'pending',
+          sent_at DATETIME,
+          error_message TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_user_id ON scheduled_messages(user_id)`);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_status ON scheduled_messages(status)`);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_scheduled_for ON scheduled_messages(scheduled_for)`);
             try {
                 connection_1.db.exec(`ALTER TABLE leads ADD COLUMN deleted_at DATETIME`);
             }
@@ -171,6 +243,12 @@ const initializeDatabase = async () => {
             }
             try {
                 connection_1.db.exec(`ALTER TABLE whatsapp_messages ADD COLUMN is_read INTEGER DEFAULT 0`);
+            }
+            catch (error) {
+                // Column already exists
+            }
+            try {
+                connection_1.db.exec(`ALTER TABLE scheduled_messages ADD COLUMN error_message TEXT`);
             }
             catch (error) {
                 // Column already exists
@@ -291,6 +369,26 @@ const initializeDatabase = async () => {
       `);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_instagram_integrations_user_id ON instagram_integrations(user_id)`);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_instagram_integrations_account_id ON instagram_integrations(instagram_account_id)`);
+            await connection_1.pool.query(`
+        CREATE TABLE IF NOT EXISTS openai_integrations (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          title VARCHAR(255) NOT NULL,
+          api_key TEXT NOT NULL,
+          model VARCHAR(100),
+          provider VARCHAR(50) DEFAULT 'openai',
+          status VARCHAR(50) DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_openai_integrations_user_id ON openai_integrations(user_id)`);
+            try {
+                await connection_1.pool.query(`ALTER TABLE openai_integrations ADD COLUMN IF NOT EXISTS provider VARCHAR(50) DEFAULT 'openai'`);
+            }
+            catch (error) {
+                // Column already exists or table not created yet
+            }
             // WhatsApp Messages table
             await connection_1.pool.query(`
         CREATE TABLE IF NOT EXISTS whatsapp_messages (
@@ -308,6 +406,24 @@ const initializeDatabase = async () => {
       `);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_user_id ON whatsapp_messages(user_id)`);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone ON whatsapp_messages(phone)`);
+            await connection_1.pool.query(`
+        CREATE TABLE IF NOT EXISTS scheduled_messages (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+          phone VARCHAR(50) NOT NULL,
+          message TEXT NOT NULL,
+          scheduled_for TIMESTAMP NOT NULL,
+          status VARCHAR(20) DEFAULT 'pending',
+          sent_at TIMESTAMP,
+          error_message TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_user_id ON scheduled_messages(user_id)`);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_status ON scheduled_messages(status)`);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_scheduled_for ON scheduled_messages(scheduled_for)`);
             try {
                 await connection_1.pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);
             }
@@ -327,6 +443,12 @@ const initializeDatabase = async () => {
             catch (error) {
                 // Column already exists or table not created yet
             }
+            try {
+                await connection_1.pool.query(`ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS error_message TEXT`);
+            }
+            catch (error) {
+                // Column already exists or table not created yet
+            }
             console.log('✅ PostgreSQL database initialized');
         }
     }
@@ -337,6 +459,40 @@ const initializeDatabase = async () => {
 };
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
+let isProcessingScheduledMessages = false;
+const processScheduledMessages = async () => {
+    if (isProcessingScheduledMessages)
+        return;
+    isProcessingScheduledMessages = true;
+    try {
+        const now = new Date().toISOString();
+        const result = await (0, connection_1.query)(`SELECT id, user_id, phone, message, scheduled_for
+       FROM scheduled_messages
+       WHERE status = $1 AND scheduled_for <= $2
+       ORDER BY scheduled_for ASC
+       LIMIT 20`, ['pending', now]);
+        const rows = result.rows || [];
+        for (const row of rows) {
+            try {
+                await (0, whatsapp_1.sendWhatsAppMessage)(String(row.user_id), String(row.phone), String(row.message));
+                await (0, connection_1.query)(`UPDATE scheduled_messages
+           SET status = $1, sent_at = $2, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $3`, ['sent', new Date().toISOString(), row.id]);
+            }
+            catch (error) {
+                await (0, connection_1.query)(`UPDATE scheduled_messages
+           SET status = $1, error_message = $2, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $3`, ['failed', error?.message || 'Erro ao enviar', row.id]);
+            }
+        }
+    }
+    catch (error) {
+        console.error('Error processing scheduled messages:', error);
+    }
+    finally {
+        isProcessingScheduledMessages = false;
+    }
+};
 // Initialize database before starting server (aguardar conclusao)
 initializeDatabase().catch(err => {
     console.error('❌ Failed to initialize database:', err);
@@ -387,6 +543,9 @@ app.use('/api/integrations', integrations_1.default);
 app.use('/api/integrations/tiktok', tiktok_1.default);
 app.use('/api/integrations/facebook', facebook_1.default);
 app.use('/api/integrations/instagram', instagram_1.default);
+app.use('/api/ai', ai_1.default);
+app.use('/api/appointments', appointments_1.default);
+app.use('/api/company', company_1.default);
 // Error handler
 app.use((err, req, res, next) => {
     console.error(err.stack);
@@ -399,4 +558,5 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
+setInterval(processScheduledMessages, 30000);
 //# sourceMappingURL=index.js.map

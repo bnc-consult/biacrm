@@ -29,6 +29,7 @@ import {
   FiRefreshCw,
   FiFileText,
   FiTrash2,
+  FiXCircle,
   FiMenu,
   FiEdit
 } from 'react-icons/fi';
@@ -356,23 +357,10 @@ export default function Leads() {
     setImportMessage(null);
     
     try {
-      let fileToUpload = file;
-      
-      // Se for Excel, precisamos converter para CSV ou usar uma biblioteca
-      // Por enquanto, vamos apenas aceitar CSV e mostrar mensagem para Excel
-      if (fileType === 'excel') {
-        // Para Excel, você precisaria de uma biblioteca como xlsx
-        // Por enquanto, vamos mostrar uma mensagem
-        setImportMessage({ 
-          type: 'error', 
-          text: 'Importação de Excel ainda não está disponível. Por favor, converta para CSV primeiro.' 
-        });
-        setIsImporting(false);
-        return;
-      }
-
+      const fileToUpload = file;
       const formData = new FormData();
       formData.append('file', fileToUpload);
+      formData.append('fileType', fileType);
 
       const response = await api.post('/leads/import', formData, {
         headers: {
@@ -527,6 +515,18 @@ export default function Leads() {
       setSelectedLeads(prev => prev.filter(id => id !== lead.id));
     } catch (error) {
       console.error('Erro ao excluir lead:', error);
+    }
+  };
+
+  const handleHardDeleteLead = async (lead: Lead) => {
+    const confirmed = window.confirm('Tem certeza que deseja apagar este lead do banco? Esta ação é irreversível.');
+    if (!confirmed) return;
+    try {
+      await api.delete(`/leads/${lead.id}/hard-delete`);
+      setLeads(prev => prev.filter(item => item.id !== lead.id));
+      setSelectedLeads(prev => prev.filter(id => id !== lead.id));
+    } catch (error) {
+      console.error('Erro ao apagar lead do banco:', error);
     }
   };
 
@@ -744,25 +744,12 @@ export default function Leads() {
     );
   }
 
-  if (filteredLeads.length === 0) {
-    const title = searchTerm.trim()
-      ? 'Nenhum lead encontrado'
-      : 'Nenhum lead cadastrado';
-    const description = searchTerm.trim()
-      ? 'Tente ajustar o filtro de pesquisa ou limpar a busca.'
-      : 'Cadastre um novo lead para começar a acompanhar o funil.';
-    return (
-      <div className="p-8 bg-gray-50 min-h-full flex items-center justify-center">
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 text-center w-full max-w-md">
-          <div className="mx-auto w-14 h-14 rounded-full bg-blue-50 flex items-center justify-center mb-4">
-            <FiSearch className="w-6 h-6 text-blue-600" />
-          </div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
-          <p className="text-sm text-gray-500">{description}</p>
-        </div>
-      </div>
-    );
-  }
+  const emptyTitle = searchTerm.trim()
+    ? 'Nenhum lead encontrado'
+    : 'Nenhum lead cadastrado';
+  const emptyDescription = searchTerm.trim()
+    ? 'Tente ajustar o filtro de pesquisa ou limpar a busca.'
+    : 'Cadastre um novo lead para começar a acompanhar o funil.';
 
   return (
     <div className="p-8 bg-gray-50 min-h-full">
@@ -939,6 +926,19 @@ export default function Leads() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
+              {filteredLeads.length === 0 && (
+                <tr>
+                  <td colSpan={columns.length} className="px-6 py-12">
+                    <div className="flex flex-col items-center text-center">
+                      <div className="mx-auto w-14 h-14 rounded-full bg-blue-50 flex items-center justify-center mb-4">
+                        <FiSearch className="w-6 h-6 text-blue-600" />
+                      </div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">{emptyTitle}</h3>
+                      <p className="text-sm text-gray-500">{emptyDescription}</p>
+                    </div>
+                  </td>
+                </tr>
+              )}
               {filteredLeads.map((lead) => {
                 const displayStatus = getDisplayStatus(lead);
                 const status = statusConfig[displayStatus] || statusConfig.sem_atendimento;
@@ -1026,6 +1026,13 @@ export default function Leads() {
                                 title="Excluir"
                               >
                                 <FiTrash2 className="w-5 h-5" />
+                              </button>
+                              <button
+                                onClick={() => handleHardDeleteLead(lead)}
+                                className="text-red-700 hover:text-red-800"
+                                title="Apagar do banco"
+                              >
+                                <FiXCircle className="w-5 h-5" />
                               </button>
                               {unreadCount > 0 && (
                                 <span className="min-w-[20px] h-5 px-1.5 ml-3 rounded-full bg-red-500 text-white text-[11px] font-semibold flex items-center justify-center">

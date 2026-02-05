@@ -12,15 +12,81 @@ router.get('/funnel', auth_1.authenticate, async (req, res) => {
     try {
         let userFilter = '';
         const params = [];
+        const { startDate, endDate, origin, status: statusFilter, userId, product } = req.query;
         if (!req.user || req.user.role !== 'admin') {
             userFilter = 'AND (user_id = ? OR user_id IS NULL)';
             params.push((req.user && req.user.id));
         }
+        let dateFilter = '';
+        if (startDate) {
+            dateFilter += ' AND DATE(created_at) >= DATE(?)';
+            params.push(startDate);
+        }
+        if (endDate) {
+            dateFilter += ' AND DATE(created_at) <= DATE(?)';
+            params.push(endDate);
+        }
+        if (origin) {
+            dateFilter += ' AND origin = ?';
+            params.push(origin);
+        }
+        if (userId) {
+            if (userId === 'unassigned') {
+                dateFilter += ' AND user_id IS NULL';
+            }
+            else {
+                const parsedUserId = Number(userId);
+                if (!Number.isNaN(parsedUserId)) {
+                    dateFilter += ' AND user_id = ?';
+                    params.push(parsedUserId);
+                }
+            }
+        }
         // Mapeamento dos status do frontend para os do backend
         // O frontend espera: novo_lead, em_contato, visita_concluida, visita_agendada, proposta, venda_ganha
         // O backend tem: novo_lead, em_contato, proposta_enviada, fechamento, perdido
+        const getDisplayStatus = (status, customData) => {
+            if (status === 'fechamento') {
+                const displayStatus = customData?.displayStatus;
+                if (displayStatus === 'visita_concluida') {
+                    return 'visita_concluida';
+                }
+                if (displayStatus === 'venda_ganha') {
+                    return 'venda_ganha';
+                }
+                return 'venda_ganha';
+            }
+            if (status === 'perdido') {
+                const displayStatus = customData?.displayStatus;
+                if (displayStatus === 'proposta') {
+                    return 'proposta';
+                }
+                return 'finalizado';
+            }
+            const statusMap = {
+                novo_lead: 'sem_atendimento',
+                em_contato: 'em_atendimento',
+                proposta_enviada: 'visita_agendada',
+            };
+            return statusMap[status] || status;
+        };
+        const getFunnelStatus = (displayStatus) => {
+            if (displayStatus === 'sem_atendimento')
+                return 'novo_lead';
+            if (displayStatus === 'em_atendimento')
+                return 'em_contato';
+            if (displayStatus === 'visita_agendada')
+                return 'visita_agendada';
+            if (displayStatus === 'visita_concluida')
+                return 'visita_concluida';
+            if (displayStatus === 'proposta')
+                return 'proposta';
+            if (displayStatus === 'venda_ganha')
+                return 'venda_ganha';
+            return null;
+        };
         // Buscar todos os leads para processar
-        const allLeadsSql = `SELECT status, custom_data FROM leads WHERE 1=1 ${userFilter}`;
+        const allLeadsSql = `SELECT status, custom_data FROM leads WHERE deleted_at IS NULL ${userFilter} ${dateFilter}`;
         const allLeadsResult = await (0, connection_1.query)(allLeadsSql, params);
         // Processar leads e contar por status do funil
         // Ordem correta do funil: Sem Atendimento -> Em Atendimento -> Visita Agendada -> Visita Concluída -> Proposta -> Venda Ganha
@@ -33,6 +99,9 @@ router.get('/funnel', auth_1.authenticate, async (req, res) => {
             'proposta': 0,
             'venda_ganha': 0
         };
+        let semAtendimentoCount = 0;
+        let vendasGanhasCount = 0;
+        let finalizadosCount = 0;
         // Contar leads por status do funil
         for (const row of allLeadsResult.rows) {
             const status = row.status;
@@ -49,32 +118,26 @@ router.get('/funnel', auth_1.authenticate, async (req, res) => {
             else if (row.custom_data) {
                 customData = row.custom_data;
             }
-            const displayStatus = (customData && customData.displayStatus);
-            // Mapear status do backend para status do funil
-            if (status === 'novo_lead') {
-                counts['novo_lead']++;
+            const displayStatus = getDisplayStatus(status, customData);
+            const productValue = customData?.product || customData?.produto || '';
+            if (product && String(productValue).toLowerCase() !== String(product).toLowerCase()) {
+                continue;
             }
-            else if (status === 'em_contato') {
-                counts['em_contato']++;
+            const funnelStatus = getFunnelStatus(displayStatus);
+            if (statusFilter && funnelStatus !== statusFilter) {
+                continue;
             }
-            else if (status === 'proposta_enviada') {
-                // proposta_enviada pode ser "visita_agendada" ou "proposta" dependendo do contexto
-                // Por padrão, vamos considerar como "visita_agendada"
-                counts['visita_agendada']++;
+            if (funnelStatus) {
+                counts[funnelStatus]++;
             }
-            else if (status === 'fechamento') {
-                // Usar displayStatus para diferenciar entre visita_concluida e venda_ganha
-                if (displayStatus === 'visita_concluida') {
-                    counts['visita_concluida']++;
-                }
-                else {
-                    // Por padrão, fechamento vai para venda_ganha
-                    counts['venda_ganha']++;
-                }
+            if (displayStatus === 'sem_atendimento') {
+                semAtendimentoCount++;
             }
-            else if (status === 'perdido') {
-                // Mapear "perdido" para "proposta" no funil
-                counts['proposta']++;
+            if (displayStatus === 'venda_ganha') {
+                vendasGanhasCount++;
+            }
+            if (displayStatus === 'finalizado') {
+                finalizadosCount++;
             }
         }
         // Construir dados do funil com percentuais
@@ -106,23 +169,12 @@ router.get('/funnel', auth_1.authenticate, async (req, res) => {
                 conversionRate: conversionRate.toFixed(2)
             });
         }
-        // Get summary stats
-        let summarySql = `
-      SELECT 
-        SUM(CASE WHEN status = 'novo_lead' AND user_id IS NULL THEN 1 ELSE 0 END) as sem_atendimento,
-        SUM(CASE WHEN status = 'fechamento' THEN 1 ELSE 0 END) as vendas_ganhas,
-        SUM(CASE WHEN status = 'perdido' THEN 1 ELSE 0 END) as finalizados
-      FROM leads
-      WHERE 1=1 ${userFilter}
-    `;
-        const summaryResult = await (0, connection_1.query)(summarySql, params);
-        const summary = summaryResult.rows[0];
         res.json({
             funnel: funnelData,
             summary: {
-                semAtendimento: parseInt(summary.sem_atendimento || 0),
-                vendasGanhas: parseInt(summary.vendas_ganhas || 0),
-                finalizados: parseInt(summary.finalizados || 0)
+                semAtendimento: semAtendimentoCount,
+                vendasGanhas: vendasGanhasCount,
+                finalizados: finalizadosCount
             }
         });
     }
@@ -152,6 +204,61 @@ router.get('/leads-by-origin', auth_1.authenticate, async (req, res) => {
     }
     catch (error) {
         console.error('Get leads by origin error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+// Get products for filters
+router.get('/products', auth_1.authenticate, async (req, res) => {
+    try {
+        let userFilter = '';
+        const params = [];
+        if (!req.user || req.user.role !== 'admin') {
+            userFilter = 'AND (user_id = ? OR user_id IS NULL)';
+            params.push((req.user && req.user.id));
+        }
+        const sql = `SELECT custom_data FROM leads WHERE deleted_at IS NULL ${userFilter}`;
+        const result = await (0, connection_1.query)(sql, params);
+        const products = new Set();
+        for (const row of result.rows) {
+            let customData = {};
+            if (row.custom_data && typeof row.custom_data === 'string') {
+                try {
+                    customData = JSON.parse(row.custom_data);
+                }
+                catch (e) {
+                    customData = {};
+                }
+            }
+            else if (row.custom_data) {
+                customData = row.custom_data;
+            }
+            const productValue = customData?.product || customData?.produto;
+            if (productValue && String(productValue).trim()) {
+                products.add(String(productValue).trim());
+            }
+        }
+        res.json(Array.from(products).sort((a, b) => a.localeCompare(b)));
+    }
+    catch (error) {
+        console.error('Get products error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+// Get users for filters
+router.get('/users', auth_1.authenticate, async (req, res) => {
+    try {
+        if (!req.user) {
+            return res.status(401).json({ message: 'Não autenticado' });
+        }
+        if (req.user.role !== 'admin') {
+            const result = await (0, connection_1.query)('SELECT id, name FROM users WHERE id = ?', [req.user.id]);
+            return res.json(result.rows);
+        }
+        const result = await (0, connection_1.query)('SELECT id, name FROM users ORDER BY name');
+        res.json(result.rows);
+    }
+    catch (error) {
+        console.error('Get users error:', error);
         res.status(500).json({ message: error.message });
     }
 });

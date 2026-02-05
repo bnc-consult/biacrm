@@ -18,7 +18,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { FiPlay, FiChevronUp, FiChevronDown } from 'react-icons/fi';
+import { FiPlay, FiChevronUp, FiChevronDown, FiSettings } from 'react-icons/fi';
 
 interface Lead {
   id: number;
@@ -32,6 +32,14 @@ interface Lead {
   custom_data?: any;
   unread_count?: number;
 }
+
+const normalizePhone = (phone?: string) => String(phone || '').replace(/\D/g, '');
+const getInitials = (value: string) => {
+  const parts = value.trim().split(' ').filter(Boolean);
+  if (parts.length === 0) return '';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+};
 
 // Configuração base das colunas
 const baseStatusColumns = [
@@ -81,7 +89,7 @@ const getOrderedStatusColumns = () => {
   return baseStatusColumns;
 };
 
-function LeadCard({ lead, isDraggingOver }: { lead: Lead; isDraggingOver?: boolean }) {
+function LeadCard({ lead, avatarUrl, isDraggingOver }: { lead: Lead; avatarUrl?: string | null; isDraggingOver?: boolean }) {
   const navigate = useNavigate();
   const {
     attributes,
@@ -102,14 +110,34 @@ function LeadCard({ lead, isDraggingOver }: { lead: Lead; isDraggingOver?: boole
   };
   const unreadCount = lead.unread_count ?? 0;
 
+  const getUserTimeZone = () => {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  };
+
+  const parseLeadDate = (dateString: string) => {
+    if (!dateString) return new Date(NaN);
+    const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(dateString);
+    if (hasTimezone) {
+      return new Date(dateString);
+    }
+    const normalized = dateString.includes('T')
+      ? dateString
+      : dateString.replace(' ', 'T');
+    return new Date(`${normalized}Z`);
+  };
+
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    const day = date.getDate().toString().padStart(2, '0');
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const year = date.getFullYear();
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    return `${day}/${month}/${year} - ${hours}:${minutes}`;
+    const date = parseLeadDate(dateString);
+    if (Number.isNaN(date.getTime())) return dateString;
+    const formatter = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: getUserTimeZone(),
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    return formatter.format(date).replace(',', ' -');
   };
 
   const handleViewLead = (e: React.MouseEvent) => {
@@ -130,13 +158,24 @@ function LeadCard({ lead, isDraggingOver }: { lead: Lead; isDraggingOver?: boole
       } ${isDraggingOver ? 'ring-2 ring-blue-400 ring-offset-2' : ''}`}
     >
       <div className="flex items-start justify-between mb-2">
-        <div className="flex-1">
-          <h3 className="font-semibold text-gray-900 text-sm mb-1">{lead.name}</h3>
-          <p className="text-xs text-gray-500 mb-1">{formatDate(lead.created_at)}</p>
-          <p className="text-xs text-gray-400 line-through opacity-50">Texto oculto</p>
-          {lead.user_name && (
-            <p className="text-xs text-gray-600 mt-2 font-medium">{lead.user_name}</p>
-          )}
+        <div className="flex items-start gap-3 flex-1">
+          <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center overflow-hidden border border-blue-200 flex-shrink-0">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt={`Foto de ${lead.name}`} className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-blue-700 text-xs font-semibold">
+                {getInitials(lead.name || 'Lead')}
+              </span>
+            )}
+          </div>
+          <div className="flex-1">
+            <h3 className="font-semibold text-gray-900 text-sm mb-1">{lead.name}</h3>
+            <p className="text-xs text-gray-500 mb-1">{formatDate(lead.created_at)}</p>
+            <p className="text-xs text-gray-400 line-through opacity-50">Texto oculto</p>
+            {lead.user_name && (
+              <p className="text-xs text-gray-600 mt-2 font-medium">{lead.user_name}</p>
+            )}
+          </div>
         </div>
         <div className="flex flex-col items-center gap-1 flex-shrink-0">
           <button 
@@ -159,11 +198,13 @@ function LeadCard({ lead, isDraggingOver }: { lead: Lead; isDraggingOver?: boole
 function StatusColumn({ 
   status, 
   leads,
-  activeId 
+  activeId,
+  avatarByPhone
 }: { 
   status: typeof baseStatusColumns[0]; 
   leads: Lead[];
   activeId: string | null;
+  avatarByPhone: Record<string, string | null>;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: status.id,
@@ -194,13 +235,18 @@ function StatusColumn({
         strategy={verticalListSortingStrategy}
       >
         <div className="space-y-2 max-h-[calc(100vh-250px)] overflow-y-auto overflow-x-hidden min-h-[100px]">
-          {leads.map((lead) => (
-            <LeadCard 
-              key={lead.id} 
-              lead={lead} 
-              isDraggingOver={activeId === lead.id.toString()}
-            />
-          ))}
+          {leads.map((lead) => {
+            const phoneKey = normalizePhone(lead.phone);
+            const avatarUrl = phoneKey ? avatarByPhone[phoneKey] : null;
+            return (
+              <LeadCard 
+                key={lead.id} 
+                lead={lead} 
+                avatarUrl={avatarUrl}
+                isDraggingOver={activeId === lead.id.toString()}
+              />
+            );
+          })}
           {leads.length === 0 && (
             <div className={`text-center text-gray-400 text-sm py-8 transition-all duration-300 ${
               isOver ? 'text-blue-500 font-medium scale-105' : ''
@@ -215,10 +261,12 @@ function StatusColumn({
 }
 
 export default function LeadsAndamento() {
+  const navigate = useNavigate();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [statusColumns, setStatusColumns] = useState(getOrderedStatusColumns());
+  const [whatsappAvatars, setWhatsappAvatars] = useState<Record<string, string | null>>({});
   
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -261,6 +309,34 @@ export default function LeadsAndamento() {
       clearInterval(refreshTimer);
     };
   }, []);
+
+  useEffect(() => {
+    let hasActive = false;
+    try {
+      const saved = localStorage.getItem('whatsappIntegrations');
+      if (!saved) return;
+      const parsed = JSON.parse(saved);
+      hasActive = Array.isArray(parsed) && parsed.some((integration: any) => integration.status === 'active');
+    } catch (e) {
+      console.error('Erro ao ler integração do WhatsApp:', e);
+      return;
+    }
+    if (!hasActive) return;
+
+    leads.forEach((lead) => {
+      const phone = normalizePhone(lead.phone);
+      if (!phone) return;
+      if (Object.prototype.hasOwnProperty.call(whatsappAvatars, phone)) return;
+      api.get('/integrations/whatsapp/profile-picture', { params: { phone: lead.phone } })
+        .then((response) => {
+          const url = response.data?.url || null;
+          setWhatsappAvatars((prev) => ({ ...prev, [phone]: url }));
+        })
+        .catch(() => {
+          setWhatsappAvatars((prev) => ({ ...prev, [phone]: null }));
+        });
+    });
+  }, [leads, whatsappAvatars]);
 
   const fetchLeads = async () => {
     try {
@@ -484,8 +560,15 @@ export default function LeadsAndamento() {
 
   return (
     <div className="p-8 bg-gray-50 min-h-full" style={{ overflow: activeId ? 'hidden' : 'visible' }}>
-      <div className="mb-6">
+      <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Andamento</h1>
+        <button
+          onClick={() => navigate('/funnel-config')}
+          className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+        >
+          <FiSettings className="w-4 h-4" />
+          <span>Configurar funil</span>
+        </button>
       </div>
 
       {/* Kanban Board */}
@@ -510,6 +593,7 @@ export default function LeadsAndamento() {
                   status={{ ...status, count: columnLeads.length }}
                   leads={columnLeads}
                   activeId={activeId}
+                  avatarByPhone={whatsappAvatars}
                 />
               </div>
             );

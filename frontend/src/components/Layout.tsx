@@ -1,15 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { IconType } from 'react-icons';
 import api from '../services/api';
 import { 
   FiHome, 
+  FiBriefcase,
   FiUsers, 
   FiCalendar, 
   FiHelpCircle,
   FiDollarSign,
   FiChevronDown,
   FiChevronUp,
+  FiChevronLeft,
+  FiChevronRight,
   FiMenu,
   FiEye,
   FiBell,
@@ -23,7 +27,9 @@ import {
   FiInfo,
   FiLogOut,
   FiUser,
-  FiMessageCircle
+  FiUserPlus,
+  FiMessageCircle,
+  FiCpu
 } from 'react-icons/fi';
 
 interface Notification {
@@ -42,6 +48,37 @@ interface Conversation {
   unreadCount: number;
 }
 
+interface Collaborator {
+  id: number;
+  name: string;
+  email: string;
+  created_at?: string;
+}
+
+type MenuSubItem = {
+  path?: string;
+  icon: IconType;
+  label: string;
+  onClick?: () => void;
+};
+
+type MenuItem = {
+  path?: string;
+  icon: IconType;
+  label: string;
+  onClick?: () => void;
+  hasDropdown?: boolean;
+  subItems?: MenuSubItem[];
+};
+
+const normalizePhone = (value?: string) => String(value || '').replace(/\D/g, '');
+const getInitials = (value: string) => {
+  const parts = value.trim().split(' ').filter(Boolean);
+  if (parts.length === 0) return '';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+};
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -56,9 +93,25 @@ export default function Layout() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [whatsappIntegrationActive, setWhatsappIntegrationActive] = useState(false);
   const [showConversationsModal, setShowConversationsModal] = useState(false);
+  const [conversationsOpen, setConversationsOpen] = useState(false);
+  const conversationsCloseTimer = useRef<number | null>(null);
   const [activeConversationTab, setActiveConversationTab] = useState<'unread' | 'all'>('unread');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [whatsappAvatars, setWhatsappAvatars] = useState<Record<string, string | null>>({});
+  const [showCollaboratorModal, setShowCollaboratorModal] = useState(false);
+  const [collaboratorName, setCollaboratorName] = useState('');
+  const [collaboratorEmail, setCollaboratorEmail] = useState('');
+  const [collaboratorPassword, setCollaboratorPassword] = useState('');
+  const [collaboratorError, setCollaboratorError] = useState('');
+  const [collaboratorSuccess, setCollaboratorSuccess] = useState('');
+  const [collaboratorLoading, setCollaboratorLoading] = useState(false);
+  const [collaboratorAction, setCollaboratorAction] = useState<'create' | 'update' | 'delete' | null>(null);
+  const [collaboratorLimit, setCollaboratorLimit] = useState<number | null>(null);
+  const [collaboratorCount, setCollaboratorCount] = useState<number | null>(null);
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [collaboratorIndex, setCollaboratorIndex] = useState(0);
+  const [isCreateMode, setIsCreateMode] = useState(true);
 
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
@@ -116,6 +169,48 @@ export default function Layout() {
       fetchConversations();
     }
   }, [showConversationsModal]);
+
+  useEffect(() => {
+    if (!whatsappIntegrationActive) {
+      setWhatsappAvatars({});
+      return;
+    }
+    const items = conversations
+      .map((item) => ({
+        phone: item.phone,
+        key: normalizePhone(item.phone)
+      }))
+      .filter((item) => item.key);
+    const missing = items.filter((item) => !(item.key in whatsappAvatars));
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    const fetchAvatars = async () => {
+      const results = await Promise.all(
+        missing.map(async (item) => {
+          try {
+            const response = await api.get('/integrations/whatsapp/profile-picture', { params: { phone: item.phone } });
+            return { key: item.key, url: response.data?.url || null };
+          } catch (error) {
+            return { key: item.key, url: null };
+          }
+        })
+      );
+      if (cancelled) return;
+      setWhatsappAvatars(prev => {
+        const next = { ...prev };
+        results.forEach(({ key, url }) => {
+          next[key] = url;
+        });
+        return next;
+      });
+    };
+
+    fetchAvatars();
+    return () => {
+      cancelled = true;
+    };
+  }, [conversations, whatsappIntegrationActive, whatsappAvatars]);
 
   // Fechar menu do usuário ao clicar fora
   useEffect(() => {
@@ -191,15 +286,28 @@ export default function Layout() {
   };
 
   const formatConversationTime = (value: string) => {
+    if (!value) return '';
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
-    const diffMs = Date.now() - date.getTime();
-    const diffMinutes = Math.floor(diffMs / 60000);
-    if (diffMinutes < 1) return 'agora';
-    if (diffMinutes < 60) return `há ${diffMinutes} min`;
-    const diffHours = Math.floor(diffMinutes / 60);
-    if (diffHours < 24) return `há ${diffHours} h`;
-    return date.toLocaleDateString('pt-BR');
+    if (Number.isNaN(date.getTime())) return value;
+    const now = new Date();
+    const isToday =
+      date.getDate() === now.getDate() &&
+      date.getMonth() === now.getMonth() &&
+      date.getFullYear() === now.getFullYear();
+    const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    const time = timeFormatter.format(date);
+    if (isToday) {
+      return `Hoje, ${time}`;
+    }
+    const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+    return `${dateFormatter.format(date)}, ${time}`;
   };
 
   const handleOpenConversation = async (conversation: Conversation) => {
@@ -210,7 +318,7 @@ export default function Layout() {
     } catch (error) {
       console.warn('Erro ao marcar conversa como lida:', error);
     } finally {
-      setShowConversationsModal(false);
+      handleCloseConversations();
       if (conversation.leadId) {
         navigate(`/leads/${conversation.leadId}`);
       }
@@ -227,32 +335,245 @@ export default function Layout() {
     return `${date} - ${time}`;
   };
 
+  const handleOpenConversations = () => {
+    if (conversationsCloseTimer.current) {
+      window.clearTimeout(conversationsCloseTimer.current);
+      conversationsCloseTimer.current = null;
+    }
+    refreshWhatsAppIntegration();
+    setShowConversationsModal(true);
+    requestAnimationFrame(() => setConversationsOpen(true));
+  };
+
+  const handleCloseConversations = () => {
+    setConversationsOpen(false);
+    conversationsCloseTimer.current = window.setTimeout(() => {
+      setShowConversationsModal(false);
+      conversationsCloseTimer.current = null;
+    }, 250);
+  };
+
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
-  const leadsSubItems = [
+  const fetchCompanyPlan = async () => {
+    try {
+      const response = await api.get('/company/plan');
+      setCollaboratorLimit(response.data.maxCollaborators ?? null);
+      setCollaboratorCount(response.data.currentCollaborators ?? null);
+    } catch (error) {
+      console.error('Erro ao buscar plano da empresa:', error);
+    }
+  };
+
+  const fetchCollaborators = async () => {
+    try {
+      const response = await api.get('/company/collaborators');
+      const list = response.data?.collaborators || [];
+      setCollaborators(list);
+      setCollaboratorCount(typeof response.data?.count === 'number' ? response.data.count : list.length);
+      return list as Collaborator[];
+    } catch (error) {
+      console.error('Erro ao buscar colaboradores:', error);
+      return [];
+    }
+  };
+
+  const resetCollaboratorForm = () => {
+    setCollaboratorName('');
+    setCollaboratorEmail('');
+    setCollaboratorPassword('');
+  };
+
+  const handleOpenCollaborators = async () => {
+    setCollaboratorError('');
+    setCollaboratorSuccess('');
+    resetCollaboratorForm();
+    setShowCollaboratorModal(true);
+    await fetchCompanyPlan();
+    const list = await fetchCollaborators();
+    if (list.length > 0) {
+      setCollaboratorIndex(0);
+      setIsCreateMode(false);
+    } else {
+      setIsCreateMode(true);
+    }
+  };
+
+  const handleCreateCollaborator = async () => {
+    setCollaboratorError('');
+    setCollaboratorSuccess('');
+    if (!collaboratorName || !collaboratorEmail || !collaboratorPassword) {
+      setCollaboratorError('Preencha nome, email e senha do colaborador.');
+      return;
+    }
+    setCollaboratorLoading(true);
+    setCollaboratorAction('create');
+    try {
+      const response = await api.post('/company/collaborators', {
+        name: collaboratorName,
+        email: collaboratorEmail,
+        password: collaboratorPassword
+      });
+      setCollaboratorSuccess(response.data?.message || 'Colaborador cadastrado com sucesso.');
+      await fetchCollaborators();
+      await fetchCompanyPlan();
+      setIsCreateMode(true);
+      resetCollaboratorForm();
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || error.message || 'Erro ao cadastrar colaborador.';
+      setCollaboratorError(errorMessage);
+    } finally {
+      setCollaboratorLoading(false);
+      setCollaboratorAction(null);
+    }
+  };
+
+  const handleUpdateCollaborator = async () => {
+    setCollaboratorError('');
+    setCollaboratorSuccess('');
+    const active = collaborators[collaboratorIndex];
+    if (!active) {
+      setCollaboratorError('Selecione um colaborador para alterar.');
+      return;
+    }
+    if (!collaboratorName || !collaboratorEmail) {
+      setCollaboratorError('Preencha nome e email do colaborador.');
+      return;
+    }
+    setCollaboratorLoading(true);
+    setCollaboratorAction('update');
+    try {
+      const payload: { name?: string; email?: string; password?: string } = {
+        name: collaboratorName,
+        email: collaboratorEmail
+      };
+      if (collaboratorPassword) {
+        payload.password = collaboratorPassword;
+      }
+      const response = await api.put(`/company/collaborators/${active.id}`, payload);
+      setCollaboratorSuccess(response.data?.message || 'Colaborador atualizado com sucesso.');
+      await fetchCollaborators();
+      setCollaboratorPassword('');
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || error.message || 'Erro ao atualizar colaborador.';
+      setCollaboratorError(errorMessage);
+    } finally {
+      setCollaboratorLoading(false);
+      setCollaboratorAction(null);
+    }
+  };
+
+  const handleDeleteCollaborator = async () => {
+    setCollaboratorError('');
+    setCollaboratorSuccess('');
+    const active = collaborators[collaboratorIndex];
+    if (!active) {
+      setCollaboratorError('Selecione um colaborador para excluir.');
+      return;
+    }
+    if (!window.confirm('Deseja realmente excluir este colaborador?')) {
+      return;
+    }
+    setCollaboratorLoading(true);
+    setCollaboratorAction('delete');
+    try {
+      const response = await api.delete(`/company/collaborators/${active.id}`);
+      setCollaboratorSuccess(response.data?.message || 'Colaborador excluído com sucesso.');
+      const list = await fetchCollaborators();
+      await fetchCompanyPlan();
+      if (list.length === 0) {
+        setIsCreateMode(true);
+        setCollaboratorIndex(0);
+        resetCollaboratorForm();
+      } else {
+        setCollaboratorIndex((prev) => Math.min(prev, list.length - 1));
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || error.message || 'Erro ao excluir colaborador.';
+      setCollaboratorError(errorMessage);
+    } finally {
+      setCollaboratorLoading(false);
+      setCollaboratorAction(null);
+    }
+  };
+
+  const handlePreviousCollaborator = () => {
+    if (collaborators.length === 0) return;
+    setIsCreateMode(false);
+    setCollaboratorIndex((prev) => (prev - 1 + collaborators.length) % collaborators.length);
+  };
+
+  const handleNextCollaborator = () => {
+    if (collaborators.length === 0) return;
+    setIsCreateMode(false);
+    setCollaboratorIndex((prev) => (prev + 1) % collaborators.length);
+  };
+
+  const handleCreateMode = () => {
+    setIsCreateMode(true);
+    setCollaboratorError('');
+    setCollaboratorSuccess('');
+    resetCollaboratorForm();
+  };
+
+  useEffect(() => {
+    if (!showCollaboratorModal) return;
+    if (!isCreateMode && collaborators.length > 0) {
+      const active = collaborators[collaboratorIndex];
+      if (active) {
+        setCollaboratorName(active.name || '');
+        setCollaboratorEmail(active.email || '');
+        setCollaboratorPassword('');
+      }
+    }
+  }, [collaborators, collaboratorIndex, isCreateMode, showCollaboratorModal]);
+
+  const leadsSubItems: MenuSubItem[] = [
     { path: '/leads', icon: FiList, label: 'Listagem' },
     { path: '/leads/andamento', icon: FiBarChart2, label: 'Andamento' },
   ];
 
-  const integrationsSubItems = [
+  const integrationsSubItems: MenuSubItem[] = [
     { path: '/entrada-saida', icon: FiRepeat, label: 'Entrada & Saída' },
   ];
 
   const totalUnreadConversations = conversations.reduce((sum, item) => sum + (item.unreadCount || 0), 0);
   const unreadConversations = conversations.filter(item => item.unreadCount > 0);
+  const isLimitReached =
+    collaboratorLimit !== null &&
+    collaboratorCount !== null &&
+    collaboratorCount >= collaboratorLimit;
 
-  const menuItems = [
+  const menuItems: MenuItem[] = [
     { path: '/', icon: FiHome, label: 'Dashboard' },
-    { icon: FiMessageCircle, label: 'Conversas', onClick: () => { refreshWhatsAppIntegration(); setShowConversationsModal(true); } },
+    { path: '/ai', icon: FiCpu, label: 'BIA Inteligência' },
+    { icon: FiMessageCircle, label: 'Conversas', onClick: handleOpenConversations },
     { path: '/leads', icon: FiUsers, label: 'Leads', hasDropdown: true, subItems: leadsSubItems },
     { path: '/appointments', icon: FiCalendar, label: 'Agendamentos' },
     { icon: FiZap, label: 'Integrações', hasDropdown: true, subItems: integrationsSubItems },
   ];
 
-  const helpItems = [
+  if (user?.role === 'admin' || user?.role === 'gestor') {
+    const integrationsIndex = menuItems.findIndex(item => item.label === 'Integrações');
+    const insertIndex = integrationsIndex >= 0 ? integrationsIndex + 1 : menuItems.length;
+    menuItems.splice(insertIndex, 0, {
+      icon: FiUserPlus,
+      label: 'Colaboradores',
+      onClick: handleOpenCollaborators
+    });
+  }
+
+
+  const helpItems: Array<{
+    icon: IconType;
+    label: string;
+    href?: string;
+    onClick?: () => void;
+  }> = [
+    { icon: FiHelpCircle, label: 'Conheça nossos Planos', href: '/landingpage' },
     { icon: FiDollarSign, label: 'Indique e ganhe' },
     { icon: FiHelpCircle, label: 'Tutoriais' },
     { icon: FiHelpCircle, label: 'Suporte' },
@@ -292,9 +613,9 @@ export default function Layout() {
         {/* User Section */}
         <div className={`p-4 border-b border-gray-200 ${sidebarOpen ? 'block' : 'hidden'}`}>
           <div className="flex items-center space-x-2 text-gray-900">
-            <FiHome className="w-5 h-5" />
+            <FiBriefcase className="w-5 h-5" />
             <span className="text-sm font-medium truncate">
-              {user?.name?.toUpperCase().substring(0, 12)}...
+              {(user?.companyName || user?.name || '').toUpperCase().substring(0, 12)}...
             </span>
           </div>
         </div>
@@ -347,20 +668,33 @@ export default function Layout() {
                   <div className="ml-4 mt-1 space-y-1">
                     {item.subItems.map((subItem) => {
                       const SubIcon = subItem.icon;
-                      const isSubActive = location.pathname === subItem.path;
+                      const isSubActive = subItem.path ? location.pathname === subItem.path : false;
                       
                       return (
                         <button
-                          key={subItem.path}
-                          onClick={() => navigate(subItem.path)}
-                          className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition-colors ${
+                          key={subItem.path || subItem.label}
+                          onClick={() => {
+                            if (subItem.onClick) {
+                              subItem.onClick();
+                              return;
+                            }
+                            if (subItem.path) {
+                              navigate(subItem.path);
+                            }
+                          }}
+                          className={`w-full flex items-center justify-start text-left gap-3 px-4 py-2 rounded-lg transition-colors whitespace-nowrap overflow-hidden ${
                             isSubActive
                               ? 'bg-blue-50 text-blue-600 border-l-4 border-blue-600'
                               : 'text-gray-600 hover:bg-gray-100'
                           }`}
                         >
                           <SubIcon className="w-4 h-4" />
-                          <span className="text-sm font-medium">{subItem.label}</span>
+                          <span
+                            className="text-sm font-medium text-left flex-1 min-w-0"
+                            style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          >
+                            {subItem.label}
+                          </span>
                         </button>
                       );
                     })}
@@ -377,14 +711,34 @@ export default function Layout() {
           <div className={`${sidebarOpen ? 'space-y-1' : 'flex flex-col items-center space-y-1'}`}>
             {helpItems.map((item) => {
               const Icon = item.icon;
+              const content = (
+                <>
+                  <Icon className="w-4 h-4" />
+                  {sidebarOpen && <span>{item.label}</span>}
+                </>
+              );
+
+              if (item.href) {
+                return (
+                  <a
+                    key={item.label}
+                    href={item.href}
+                    className={`${sidebarOpen ? 'w-full flex items-center space-x-3 px-4 py-2' : 'w-10 h-10 flex items-center justify-center'} text-sm text-gray-700 hover:bg-gray-200 rounded-lg`}
+                    title={!sidebarOpen ? item.label : ''}
+                  >
+                    {content}
+                  </a>
+                );
+              }
+
               return (
                 <button
                   key={item.label}
+                  onClick={item.onClick}
                   className={`${sidebarOpen ? 'w-full flex items-center space-x-3 px-4 py-2' : 'w-10 h-10 flex items-center justify-center'} text-sm text-gray-700 hover:bg-gray-200 rounded-lg`}
                   title={!sidebarOpen ? item.label : ''}
                 >
-                  <Icon className="w-4 h-4" />
-                  {sidebarOpen && <span>{item.label}</span>}
+                  {content}
                 </button>
               );
             })}
@@ -505,10 +859,7 @@ export default function Layout() {
           <div className="flex items-center space-x-4">
             <button
               className="relative text-gray-700 hover:text-gray-900"
-              onClick={() => {
-                refreshWhatsAppIntegration();
-                setShowConversationsModal(true);
-              }}
+              onClick={handleOpenConversations}
               title="Conversas"
             >
               <FiEye className="w-5 h-5" />
@@ -605,16 +956,23 @@ export default function Layout() {
       {/* Conversas Drawer */}
       {showConversationsModal && (
         <div
-          className="fixed inset-0 z-50"
+          className="fixed inset-y-0 right-0 z-50"
+          style={{ left: sidebarOpen ? '16rem' : '4rem' }}
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              setShowConversationsModal(false);
+              handleCloseConversations();
             }
           }}
         >
-          <div className="absolute inset-0 bg-black/40" />
           <div
-            className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-xl flex flex-col"
+            className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${
+              conversationsOpen ? 'opacity-100' : 'opacity-0'
+            }`}
+          />
+          <div
+            className={`absolute left-0 top-0 h-full w-full max-w-md bg-white shadow-xl flex flex-col transform transition-transform duration-300 ease-out ${
+              conversationsOpen ? 'translate-x-0' : '-translate-x-8'
+            }`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header do Modal */}
@@ -637,7 +995,7 @@ export default function Layout() {
                   <FiRefreshCw className="w-5 h-5" />
                 </button>
                 <button
-                  onClick={() => setShowConversationsModal(false)}
+                  onClick={handleCloseConversations}
                   className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
                 >
                   <span className="text-xl">×</span>
@@ -707,8 +1065,20 @@ export default function Layout() {
                           onClick={() => handleOpenConversation(conversation)}
                           className="w-full bg-gray-50 rounded-lg p-4 flex items-start gap-3 text-left hover:bg-gray-100 transition-colors"
                         >
-                          <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center text-green-600 flex-shrink-0">
-                            <FiMessageCircle className="w-5 h-5" />
+                          <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center overflow-hidden border border-blue-200 flex-shrink-0">
+                            {(() => {
+                              const phoneKey = normalizePhone(conversation.phone);
+                              const avatarUrl = phoneKey ? whatsappAvatars[phoneKey] : null;
+                              if (avatarUrl) {
+                                return <img src={avatarUrl} alt="Foto do lead" className="w-full h-full object-cover" />;
+                              }
+                              const label = conversation.leadName || conversation.phone || 'Lead';
+                              return (
+                                <span className="text-blue-700 text-xs font-semibold">
+                                  {getInitials(label)}
+                                </span>
+                              );
+                            })()}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between gap-2">
@@ -741,6 +1111,146 @@ export default function Layout() {
                   )}
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCollaboratorModal && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowCollaboratorModal(false);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-600 text-white">B</div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Colaboradores</h3>
+                  <p className="text-xs text-gray-500">Limite conforme o plano</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePreviousCollaborator}
+                  disabled={collaborators.length === 0}
+                  className="rounded-md border border-gray-200 p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-50"
+                  title="Colaborador anterior"
+                >
+                  <FiChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNextCollaborator}
+                  disabled={collaborators.length === 0}
+                  className="rounded-md border border-gray-200 p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-50"
+                  title="Próximo colaborador"
+                >
+                  <FiChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {collaboratorLimit !== null && collaboratorCount !== null && (
+              <div className="mt-3 text-xs text-gray-500">
+                Colaboradores cadastrados: {collaboratorCount}/{collaboratorLimit}
+                {!isCreateMode && collaborators.length > 0 && (
+                  <span className="ml-2">• Visualizando {collaboratorIndex + 1} de {collaborators.length}</span>
+                )}
+              </div>
+            )}
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Nome do colaborador</label>
+                <input
+                  type="text"
+                  value={collaboratorName}
+                  onChange={(e) => setCollaboratorName(e.target.value)}
+                  disabled={isLimitReached && isCreateMode}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Email de acesso</label>
+                <input
+                  type="email"
+                  value={collaboratorEmail}
+                  onChange={(e) => setCollaboratorEmail(e.target.value)}
+                  disabled={isLimitReached && isCreateMode}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Senha</label>
+                <input
+                  type="password"
+                  value={collaboratorPassword}
+                  onChange={(e) => setCollaboratorPassword(e.target.value)}
+                  disabled={isLimitReached && isCreateMode}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-500"
+                />
+              </div>
+            </div>
+
+            {collaboratorError && <div className="mt-3 text-sm text-red-600">{collaboratorError}</div>}
+            {collaboratorSuccess && <div className="mt-3 text-sm text-green-600">{collaboratorSuccess}</div>}
+            {isLimitReached && isCreateMode && (
+              <div className="mt-3 text-xs text-gray-500">
+                Limite do plano atingido. Exclua um colaborador para cadastrar outro.
+              </div>
+            )}
+
+            <div className="mt-5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCreateMode}
+                  className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700 hover:bg-green-100 disabled:opacity-60"
+                  disabled={collaboratorLoading || isLimitReached}
+                >
+                  Novo
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteCollaborator}
+                  className="rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+                  disabled={isCreateMode || collaborators.length === 0 || collaboratorLoading}
+                >
+                  {collaboratorAction === 'delete' ? 'Excluindo...' : 'Excluir'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUpdateCollaborator}
+                  className="rounded-md border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+                  disabled={isCreateMode || collaborators.length === 0 || collaboratorLoading}
+                >
+                  {collaboratorAction === 'update' ? 'Salvando...' : 'Alterar'}
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCollaboratorModal(false)}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateCollaborator}
+                className="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-60"
+                disabled={collaboratorLoading || !isCreateMode || isLimitReached}
+              >
+                {collaboratorAction === 'create' ? 'Salvando...' : 'Cadastrar'}
+              </button>
             </div>
           </div>
         </div>

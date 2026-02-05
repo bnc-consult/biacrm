@@ -7,17 +7,52 @@ const createTables = async () => {
       console.log('Creating SQLite tables...');
       
       // Users table
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          email TEXT UNIQUE NOT NULL,
-          password TEXT NOT NULL,
-          role TEXT DEFAULT 'atendente' CHECK (role IN ('admin', 'gestor', 'atendente')),
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS companies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        plan_type TEXT NOT NULL DEFAULT 'starter' CHECK (plan_type IN ('starter', 'pro', 'scale')),
+        plan_active INTEGER DEFAULT 1,
+        max_collaborators INTEGER DEFAULT 2,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT DEFAULT 'atendente' CHECK (role IN ('admin', 'gestor', 'atendente')),
+        company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    try {
+      db.exec(`ALTER TABLE users ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL`);
+    } catch (error) {
+      // Column already exists
+    }
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS email_verification_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL,
+        code TEXT NOT NULL,
+        purpose TEXT NOT NULL DEFAULT 'register',
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    try {
+      db.exec(`ALTER TABLE email_verification_codes ADD COLUMN purpose TEXT NOT NULL DEFAULT 'register'`);
+    } catch (error) {
+      // Column already exists
+    }
 
       // Custom fields table
       db.exec(`
@@ -81,6 +116,50 @@ const createTables = async () => {
       db.exec(`CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at)`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_lead_history_lead_id ON lead_history(lead_id)`);
 
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS openai_integrations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          api_key TEXT NOT NULL,
+          model TEXT,
+          provider TEXT DEFAULT 'openai',
+          status TEXT DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_openai_integrations_user_id ON openai_integrations(user_id)`);
+      try {
+        db.exec(`ALTER TABLE openai_integrations ADD COLUMN provider TEXT DEFAULT 'openai'`);
+      } catch (error) {
+        // Column already exists
+      }
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS scheduled_messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+          phone TEXT NOT NULL,
+          message TEXT NOT NULL,
+          scheduled_for DATETIME NOT NULL,
+          status TEXT DEFAULT 'pending',
+          sent_at DATETIME,
+          error_message TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_user_id ON scheduled_messages(user_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_status ON scheduled_messages(status)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_scheduled_for ON scheduled_messages(scheduled_for)`);
+      try {
+        db.exec(`ALTER TABLE scheduled_messages ADD COLUMN error_message TEXT`);
+      } catch (error) {
+        // Column already exists
+      }
+
       console.log('✅ SQLite tables created successfully');
     } else if (pool) {
       // PostgreSQL migrations
@@ -88,16 +167,51 @@ const createTables = async () => {
       
       // Users table
       await pool.query(`
+        CREATE TABLE IF NOT EXISTS companies (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          email VARCHAR(255) NOT NULL,
+          plan_type VARCHAR(20) NOT NULL DEFAULT 'starter' CHECK (plan_type IN ('starter', 'pro', 'scale')),
+          plan_active BOOLEAN DEFAULT true,
+          max_collaborators INTEGER DEFAULT 2,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      await pool.query(`
         CREATE TABLE IF NOT EXISTS users (
           id SERIAL PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
           email VARCHAR(255) UNIQUE NOT NULL,
           password VARCHAR(255) NOT NULL,
           role VARCHAR(50) DEFAULT 'atendente' CHECK (role IN ('admin', 'gestor', 'atendente')),
+          company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
+      try {
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL`);
+      } catch (error) {
+        // Column already exists
+      }
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS email_verification_codes (
+          id SERIAL PRIMARY KEY,
+          email VARCHAR(255) NOT NULL,
+          code VARCHAR(20) NOT NULL,
+          purpose VARCHAR(30) NOT NULL DEFAULT 'register',
+          expires_at TIMESTAMP NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      try {
+        await pool.query(`ALTER TABLE email_verification_codes ADD COLUMN IF NOT EXISTS purpose VARCHAR(30) NOT NULL DEFAULT 'register'`);
+      } catch (error) {
+        // Column already exists
+      }
 
       // Custom fields table
       await pool.query(`
@@ -160,6 +274,50 @@ const createTables = async () => {
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_user_id ON leads(user_id)`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at)`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_lead_history_lead_id ON lead_history(lead_id)`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS openai_integrations (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          title VARCHAR(255) NOT NULL,
+          api_key TEXT NOT NULL,
+          model VARCHAR(100),
+          provider VARCHAR(50) DEFAULT 'openai',
+          status VARCHAR(50) DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_openai_integrations_user_id ON openai_integrations(user_id)`);
+      try {
+        await pool.query(`ALTER TABLE openai_integrations ADD COLUMN IF NOT EXISTS provider VARCHAR(50) DEFAULT 'openai'`);
+      } catch (error) {
+        // Column already exists or table not created yet
+      }
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS scheduled_messages (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+          phone VARCHAR(50) NOT NULL,
+          message TEXT NOT NULL,
+          scheduled_for TIMESTAMP NOT NULL,
+          status VARCHAR(20) DEFAULT 'pending',
+          sent_at TIMESTAMP,
+          error_message TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_user_id ON scheduled_messages(user_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_status ON scheduled_messages(status)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_scheduled_for ON scheduled_messages(scheduled_for)`);
+      try {
+        await pool.query(`ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS error_message TEXT`);
+      } catch (error) {
+        // Column already exists or table not created yet
+      }
 
       console.log('✅ PostgreSQL tables created successfully');
     }

@@ -8,11 +8,14 @@ import LeadsAndamento from './pages/LeadsAndamento';
 import FunnelConfig from './pages/FunnelConfig';
 import Integrations from './pages/Integrations';
 import Appointments from './pages/Appointments';
+import AiAssistant from './pages/AiAssistant';
+import LandingPage from './pages/LandingPage';
 import TermsOfService from './pages/TermsOfService';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import UserDataDeletion from './pages/UserDataDeletion';
 import BNCConsultoria from './pages/BNCConsultoria';
 import Layout from './components/Layout';
+import TrialExpiredModal from './components/TrialExpiredModal';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -32,30 +35,39 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes() {
+  const { trialExpired, trialMessage } = useAuth();
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/terms-of-service" element={<TermsOfService />} />
-      <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-      <Route path="/user-data-deletion" element={<UserDataDeletion />} />
-      <Route path="/bncconsultoria" element={<BNCConsultoria />} />
-      <Route
-        path="/"
-        element={
-          <PrivateRoute>
-            <Layout />
-          </PrivateRoute>
-        }
-      >
-        <Route index element={<Dashboard />} />
-        <Route path="leads" element={<Leads />} />
-        <Route path="leads/andamento" element={<LeadsAndamento />} />
-        <Route path="leads/:id" element={<LeadDetail />} />
-        <Route path="funnel-config" element={<FunnelConfig />} />
-        <Route path="entrada-saida" element={<Integrations />} />
-        <Route path="appointments" element={<Appointments />} />
-      </Route>
-    </Routes>
+    <>
+      <TrialExpiredModal
+        open={trialExpired}
+        message={trialMessage || 'Seu periodo de trial expirou. Escolha um plano para continuar.'}
+      />
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/terms-of-service" element={<TermsOfService />} />
+        <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+        <Route path="/user-data-deletion" element={<UserDataDeletion />} />
+        <Route path="/bncconsultoria" element={<BNCConsultoria />} />
+        <Route path="/landingpage" element={<LandingPage />} />
+        <Route
+          path="/"
+          element={
+            <PrivateRoute>
+              <Layout />
+            </PrivateRoute>
+          }
+        >
+          <Route index element={<Dashboard />} />
+          <Route path="leads" element={<Leads />} />
+          <Route path="leads/andamento" element={<LeadsAndamento />} />
+          <Route path="leads/:id" element={<LeadDetail />} />
+          <Route path="funnel-config" element={<FunnelConfig />} />
+          <Route path="entrada-saida" element={<Integrations />} />
+          <Route path="appointments" element={<Appointments />} />
+          <Route path="ai" element={<AiAssistant />} />
+        </Route>
+      </Routes>
+    </>
   );
 }
 

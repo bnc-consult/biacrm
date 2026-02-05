@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import { query } from '../database/connection';
 import { authenticate, AuthRequest } from '../middleware/auth';
-import { disconnectWhatsApp, getWhatsAppConversations, getWhatsAppMessages, getWhatsAppQr, markWhatsAppMessagesRead, sendWhatsAppMedia, sendWhatsAppMessage, subscribeWhatsAppMessages } from '../services/whatsapp';
+import { disconnectWhatsApp, getWhatsAppConversations, getWhatsAppMessages, getWhatsAppProfilePicture, getWhatsAppQr, markWhatsAppMessagesRead, sendWhatsAppMedia, sendWhatsAppMessage, setWhatsAppSyncWindow, subscribeWhatsAppMessages } from '../services/whatsapp';
 
 const router = express.Router();
 const upload = multer({
@@ -75,6 +75,10 @@ router.post('/generate-token', authenticate, async (req: AuthRequest, res) => {
 router.get('/whatsapp/qr', authenticate, async (req: AuthRequest, res) => {
   try {
     const userId = (req.user && req.user.id) || 'anon';
+    const syncDaysValue = Number(req.query.syncDays);
+    if (Number.isFinite(syncDaysValue)) {
+      setWhatsAppSyncWindow(String(userId), syncDaysValue);
+    }
     const { status, qr } = await getWhatsAppQr(String(userId));
 
     if (status === 'connected') {
@@ -136,6 +140,122 @@ router.post('/whatsapp/send', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
+router.post('/whatsapp/schedule', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const userId = (req.user && req.user.id) || 'anon';
+    const { leadId, phone, message, scheduled_for } = req.body;
+    if (!phone || !message || !scheduled_for) {
+      return res.status(400).json({ message: 'Telefone, mensagem e data são obrigatórios' });
+    }
+    const scheduledFor = new Date(String(scheduled_for));
+    if (Number.isNaN(scheduledFor.getTime())) {
+      return res.status(400).json({ message: 'Data inválida' });
+    }
+    await query(
+      `INSERT INTO scheduled_messages (user_id, lead_id, phone, message, scheduled_for, status)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        Number(userId),
+        leadId ? Number(leadId) : null,
+        String(phone),
+        String(message),
+        scheduledFor.toISOString(),
+        'pending'
+      ]
+    );
+    if (leadId) {
+      await query(
+        'INSERT INTO lead_history (lead_id, user_id, action, description) VALUES ($1, $2, $3, $4)',
+        [Number(leadId), Number(userId), 'scheduled_message', 'Mensagem automática agendada']
+      );
+    }
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('Error scheduling WhatsApp message:', error);
+    res.status(500).json({ message: error.message || 'Erro ao agendar mensagem' });
+  }
+});
+
+router.get('/whatsapp/scheduled', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const userId = (req.user && req.user.id) || 'anon';
+    const leadId = req.query.leadId ? Number(req.query.leadId) : null;
+    if (!leadId) {
+      return res.status(400).json({ message: 'Lead é obrigatório' });
+    }
+    const result = await query(
+      `SELECT id, message, scheduled_for
+       FROM scheduled_messages
+       WHERE user_id = $1 AND lead_id = $2 AND status = $3
+       ORDER BY scheduled_for DESC
+       LIMIT 1`,
+      [Number(userId), leadId, 'pending']
+    );
+    const row = (result.rows || [])[0] || null;
+    res.json({ success: true, scheduled: row });
+  } catch (error: any) {
+    console.error('Error fetching scheduled message:', error);
+    res.status(500).json({ message: error.message || 'Erro ao buscar agendamento' });
+  }
+});
+
+router.get('/whatsapp/scheduled-all', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const userId = (req.user && req.user.id) || 'anon';
+    const leadId = req.query.leadId ? Number(req.query.leadId) : null;
+    if (!leadId) {
+      return res.status(400).json({ message: 'Lead é obrigatório' });
+    }
+    const result = await query(
+      `SELECT id, message, scheduled_for, status
+       FROM scheduled_messages
+       WHERE user_id = $1 AND lead_id = $2
+       ORDER BY scheduled_for DESC`,
+      [Number(userId), leadId]
+    );
+    res.json({ success: true, scheduled: result.rows || [] });
+  } catch (error: any) {
+    console.error('Error fetching scheduled messages:', error);
+    res.status(500).json({ message: error.message || 'Erro ao buscar agendamentos' });
+  }
+});
+
+router.delete('/whatsapp/scheduled/:id', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const userId = (req.user && req.user.id) || 'anon';
+    const scheduledId = Number(req.params.id);
+    if (!scheduledId) {
+      return res.status(400).json({ message: 'Agendamento inválido' });
+    }
+    await query(
+      `DELETE FROM scheduled_messages WHERE id = $1 AND user_id = $2`,
+      [scheduledId, Number(userId)]
+    );
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('Error deleting scheduled message:', error);
+    res.status(500).json({ message: error.message || 'Erro ao excluir agendamento' });
+  }
+});
+
+router.delete('/whatsapp/scheduled', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const userId = (req.user && req.user.id) || 'anon';
+    const leadId = req.query.leadId ? Number(req.query.leadId) : null;
+    if (!leadId) {
+      return res.status(400).json({ message: 'Lead é obrigatório' });
+    }
+    await query(
+      `DELETE FROM scheduled_messages WHERE lead_id = $1 AND user_id = $2`,
+      [leadId, Number(userId)]
+    );
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('Error deleting scheduled messages:', error);
+    res.status(500).json({ message: error.message || 'Erro ao excluir agendamentos' });
+  }
+});
+
 router.post('/whatsapp/send-media', authenticate, upload.single('file'), async (req: AuthRequest, res) => {
   try {
     const userId = (req.user && req.user.id) || 'anon';
@@ -166,6 +286,21 @@ router.get('/whatsapp/messages', authenticate, async (req: AuthRequest, res) => 
   } catch (error: any) {
     console.error('Error fetching WhatsApp messages:', error);
     res.status(500).json({ message: error.message || 'Erro ao buscar mensagens do WhatsApp' });
+  }
+});
+
+router.get('/whatsapp/profile-picture', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const userId = (req.user && req.user.id) || 'anon';
+    const phone = String(req.query.phone || '');
+    if (!phone) {
+      return res.status(400).json({ message: 'Telefone é obrigatório' });
+    }
+    const url = await getWhatsAppProfilePicture(String(userId), phone);
+    res.json({ success: true, url });
+  } catch (error: any) {
+    console.error('Error fetching WhatsApp profile picture:', error);
+    res.status(500).json({ message: error.message || 'Erro ao buscar foto do WhatsApp' });
   }
 });
 

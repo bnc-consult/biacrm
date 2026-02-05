@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BIACRM — Landing</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{--bg:#0f172a;--muted:#94a3b8;--card:#fff;--accent:#06b6d4}
+    *{box-sizing:border-box}
+    body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial;margin:0;background:linear-gradient(180deg,#071026 0%, #07172a 60%);color:#e6eef8}
+    .hero{padding:68px 20px 56px;text-align:center}
+    .container{max-width:1100px;margin:0 auto;padding:0 20px}
+    h1{font-size:34px;margin:8px 0 6px;letter-spacing:0.2px}
+    p.lead{font-size:18px;color:var(--muted);max-width:900px;margin:0 auto}
+    .cta{display:inline-flex;align-items:center;gap:10px;margin-top:18px;padding:12px 18px;background:var(--accent);color:#072030;border-radius:10px;text-decoration:none;font-weight:600}
+    header .logo{height:72px;display:inline-block;margin-bottom:14px}
+
+    /* animated brain / network */
+    .brain-wrap{width:120px;height:120px;margin:18px auto 8px;position:relative}
+    .node{width:10px;height:10px;border-radius:50%;background:linear-gradient(135deg,#34d399,#06b6d4);position:absolute;box-shadow:0 6px 20px rgba(6,182,212,0.12)}
+    svg.network{width:100%;height:100%;position:absolute;left:0;top:0}
+    .pulse{animation:pulse 2.4s infinite ease-in-out}
+    @keyframes pulse{0%{transform:scale(1);opacity:1}50%{transform:scale(1.25);opacity:0.8}100%{transform:scale(1);opacity:1}}
+
+    main{background:rgba(255,255,255,0.02);backdrop-filter:blur(6px);margin-top:18px;padding:28px;border-top-left-radius:12px;border-top-right-radius:12px}
+    .features{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:18px}
+    .feature{background:rgba(255,255,255,0.03);padding:16px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);color:#e6eef8}
+
+    .plans{display:flex;gap:18px;margin-top:28px;flex-wrap:wrap}
+    .card{flex:1;min-width:240px;background:#fff;color:#062020;padding:18px;border-radius:12px}
+    .price{font-size:22px;font-weight:700;margin:8px 0}
+
+    .section-title{color:#cfeef7;margin-top:8px}
+    footer{padding:28px;text-align:center;color:#6b7280}
+
+    /* responsive tweaks */
+    @media (max-width:720px){h1{font-size:22px}.plans{flex-direction:column}.brain-wrap{width:84px;height:84px}}
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="container">
+      <div class="logo-wrap">
+        <img class="logo" src="/landingpage/media/logo.jpg" alt="BIACRM logo" onerror="this.style.display='none'">
+      </div>
+
+      <div class="brain-wrap" aria-hidden>
+        <svg class="network" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+          <defs><linearGradient id="g1" x1="0" x2="1"><stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs>
+          <line x1="18" y1="30" x2="44" y2="20" stroke="url(#g1)" stroke-opacity="0.45" stroke-width="2"/>
+          <line x1="44" y1="20" x2="86" y2="28" stroke="url(#g1)" stroke-opacity="0.45" stroke-width="2"/>
+          <line x1="44" y1="20" x2="44" y2="60" stroke="url(#g1)" stroke-opacity="0.45" stroke-width="2"/>
+          <line x1="86" y1="28" x2="70" y2="78" stroke="url(#g1)" stroke-opacity="0.45" stroke-width="2"/>
+          <line x1="44" y1="60" x2="70" y2="78" stroke="url(#g1)" stroke-opacity="0.45" stroke-width="2"/>
+        </svg>
+        <div class="node pulse" style="left:14px;top:26px"></div>
+        <div class="node" style="left:40px;top:16px;animation:dot 3s infinite linear"></div>
+        <div class="node pulse" style="left:84px;top:24px"></div>
+        <div class="node" style="left:40px;top:56px"></div>
+        <div class="node" style="left:68px;top:72px"></div>
+      </div>
+
+      <h1>BIACRM — CRM + Automação via WhatsApp com IA</h1>
+      <p class="lead">Implemente automações que qualificam leads, automatizam atendimento e aumentam conversões — pronto para uso com WhatsApp e integrado ao seu fluxo.</p>
+      <a class="cta" href="#plans">Conheça os planos</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <section>
+      <h2 class="section-title">Por que BIACRM?</h2>
+      <div class="features">
+        <div class="feature"><strong>Integração nativa com WhatsApp</strong><div style="margin-top:6px;color:var(--muted)">Converse, qualifique e agende diretamente do mesmo painel.</div></div>
+        <div class="feature"><strong>IA para qualificação de leads</strong><div style="margin-top:6px;color:var(--muted)">Resumo automático e score para priorizar quem converte.</div></div>
+        <div class="feature"><strong>Automação de fluxos</strong><div style="margin-top:6px;color:var(--muted)">Follow‑ups, agendamento e geração de propostas automatizadas.</div></div>
+        <div class="feature"><strong>Relatórios e BI</strong><div style="margin-top:6px;color:var(--muted)">Dashboards e previsões para decisões rápidas.</div></div>
+      </div>
+    </section>
+
+    <section id="plans">
+      <h2 class="section-title">Planos</h2>
+      <div class="plans">
+        <div class="card">
+          <h3>Starter</h3>
+          <div class="price">R$199 / mês</div>
+          <div style="color:#334155">1 número WhatsApp • 2 usuários • 2 automações simples • 2k msgs</div>
+          <a class="cta" href="mailto:contato@bncconsultoria.com?subject=Quero%20o%20Plano%20Starter%20BIACRM">Contratar</a>
+        </div>
+        <div class="card">
+          <h3>Pro</h3>
+          <div class="price">R$599 / mês</div>
+          <div style="color:#334155">1‑2 números • 5 usuários • Automação + IA • 10k msgs</div>
+          <a class="cta" href="mailto:contato@bncconsultoria.com?subject=Quero%20o%20Plano%20Pro%20BIACRM">Contratar</a>
+        </div>
+        <div class="card">
+          <h3>Scale</h3>
+          <div class="price">R$1.499 / mês</div>
+          <div style="color:#334155">Números múltiplos • 15 usuários • Dashboards • SLA</div>
+          <a class="cta" href="mailto:contato@bncconsultoria.com?subject=Quero%20o%20Plano%20Scale%20BIACRM">Contratar</a>
+        </div>
+      </div>
+    </section>
+
+    <section style="margin-top:28px">
+      <h2 class="section-title">Como funciona o pilot pago</h2>
+      <p style="color:var(--muted)">Oferecemos pilot pago: 50% do setup + 20% off no primeiro mês. Implementação em até 14 dias com entregáveis mensuráveis.</p>
+    </section>
+
+    <section style="margin-top:28px">
+      <h2 class="section-title">Contato</h2>
+      <p style="color:var(--muted)">Email: <a style="color:#9be7ef" href="mailto:contato@bncconsultoria.com">contato@bncconsultoria.com</a> • PIX: 53.905.812/0001-42</p>
+    </section>
+  </main>
+
+  <footer>
+    © BNC Consultoria em TI LTDA — BIACRM
+  </footer>
+</body>
+</html>

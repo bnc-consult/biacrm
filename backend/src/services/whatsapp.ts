@@ -31,25 +31,45 @@ const messageStore = new Map<string, WhatsAppMessageEvent[]>();
 const MAX_MESSAGES_PER_USER = 300;
 const lidToJid = new Map<string, string>();
 const lidToPhone = new Map<string, string>();
+const phoneToName = new Map<string, string>();
 const lastOutboundPhoneByUser = new Map<string, string>();
+const pendingLeadCreates = new Map<string, number>();
+const syncWindowDaysByUser = new Map<string, number>();
 const FINAL_STATUSES = new Set(['finalizado']);
 
 const normalizePhone = (phone: string) => phone.replace(/\D/g, '');
+const isLikelyPhone = (digits: string) => {
+  if (!digits) return false;
+  if (digits.length === 10 || digits.length === 11) return true;
+  if ((digits.length === 12 || digits.length === 13) && digits.startsWith('55')) return true;
+  return false;
+};
+const isGroupJid = (jid?: string | null) => !!jid && (jid.endsWith('@g.us') || jid.endsWith('@broadcast'));
 const getPhoneVariants = (digits: string) => {
   const variants = new Set<string>();
   if (!digits) return variants;
+  const addWithAndWithoutNinth = (localDigits: string) => {
+    if (!localDigits) return;
+    variants.add(localDigits);
+    variants.add(`55${localDigits}`);
+    // BR mobile: allow missing or present 9th digit after DDD
+    if (localDigits.length === 11 && localDigits[2] === '9') {
+      const withoutNinth = `${localDigits.slice(0, 2)}${localDigits.slice(3)}`;
+      variants.add(withoutNinth);
+      variants.add(`55${withoutNinth}`);
+    } else if (localDigits.length === 10) {
+      const withNinth = `${localDigits.slice(0, 2)}9${localDigits.slice(2)}`;
+      variants.add(withNinth);
+      variants.add(`55${withNinth}`);
+    }
+  };
+
   variants.add(digits);
   if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
-    variants.add(digits.slice(2));
-  }
-  if (digits.length === 10 || digits.length === 11) {
-    variants.add(`55${digits}`);
-  }
-  // BR mobile: allow missing or present 9th digit after DDD
-  if (digits.length === 11 && digits[2] === '9') {
-    variants.add(`${digits.slice(0, 2)}${digits.slice(3)}`);
-  } else if (digits.length === 10) {
-    variants.add(`${digits.slice(0, 2)}9${digits.slice(2)}`);
+    const localDigits = digits.slice(2);
+    addWithAndWithoutNinth(localDigits);
+  } else if (digits.length === 10 || digits.length === 11) {
+    addWithAndWithoutNinth(digits);
   }
   return variants;
 };
@@ -67,7 +87,10 @@ const formatSendPhone = (digits: string) => {
   if (!digits) return digits;
   let normalized = digits;
   if (normalized.length === 10) {
-    normalized = `${normalized.slice(0, 2)}9${normalized.slice(2)}`;
+    const thirdDigit = normalized.charAt(2);
+    if (thirdDigit !== '9') {
+      normalized = `${normalized.slice(0, 2)}9${normalized.slice(2)}`;
+    }
   }
   return ensureCountryCode(normalized);
 };
@@ -89,7 +112,58 @@ const isSameLead = (storedPhone: string, leadPhone: string) => {
   return false;
 };
 
-const getIncomingLeadName = (message: any) => {
+const getMessageTimestampMs = (message: any) => {
+  const raw = message?.messageTimestamp ?? message?.message?.messageTimestamp;
+  if (!raw) return null;
+  const value = typeof raw === 'number'
+    ? raw
+    : (typeof raw?.toNumber === 'function' ? raw.toNumber() : Number(raw));
+  if (!Number.isFinite(value)) return null;
+  return value < 10_000_000_000 ? value * 1000 : value;
+};
+
+const shouldSyncMessage = (userId: string, source: string, message: any) => {
+  if (source !== 'history' && source !== 'set') return true;
+  const days = syncWindowDaysByUser.get(userId);
+  if (!days || days <= 0) return true;
+  const timestampMs = getMessageTimestampMs(message);
+  if (!timestampMs) return true;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return timestampMs >= cutoff;
+};
+
+export const setWhatsAppSyncWindow = (userId: string, days?: number) => {
+  if (!days || days <= 0) {
+    syncWindowDaysByUser.delete(userId);
+    return;
+  }
+  syncWindowDaysByUser.set(userId, days);
+};
+
+const extractPhoneFromJid = (jid?: string | null) => {
+  if (!jid) return '';
+  const base = String(jid).split('@')[0] || '';
+  return normalizePhone(base);
+};
+
+const storeContactName = (record: any) => {
+  const jid = typeof record?.jid === 'string'
+    ? record.jid
+    : (typeof record?.id === 'string' ? record.id : null);
+  if (!jid || isGroupJid(jid)) return;
+  const phone = extractPhoneFromJid(jid);
+  const rawName = [
+    record?.name,
+    record?.notify,
+    record?.notifyName,
+    record?.verifiedName,
+    record?.subject
+  ].find(value => typeof value === 'string' && value.trim().length > 0);
+  if (!phone || !rawName || typeof rawName !== 'string') return;
+  phoneToName.set(phone, rawName.trim());
+};
+
+const getIncomingLeadName = (message: any, phone?: string) => {
   const rawName = [
     message?.pushName,
     message?.notifyName,
@@ -97,21 +171,50 @@ const getIncomingLeadName = (message: any) => {
     message?.name
   ]
     .find(value => typeof value === 'string' && value.trim().length > 0);
-  if (!rawName || typeof rawName !== 'string') return null;
-  return rawName.trim();
+  if (rawName && typeof rawName === 'string') {
+    return rawName.trim();
+  }
+  const digits = normalizePhone(phone || '');
+  if (digits && phoneToName.has(digits)) {
+    return phoneToName.get(digits) || null;
+  }
+  return null;
 };
 
 const ensureLeadForIncomingMessage = async (userId: string, phone: string, leadName?: string | null) => {
   const digits = normalizePhone(phone);
   if (!digits) return;
+  const pendingKey = `${userId}:${digits}`;
+  const pendingAt = pendingLeadCreates.get(pendingKey);
+  if (pendingAt && Date.now() - pendingAt < 30000) {
+    return;
+  }
+  pendingLeadCreates.set(pendingKey, Date.now());
   try {
     const leadsResult = await query(
-      `SELECT id, phone FROM leads WHERE user_id = $1 AND deleted_at IS NULL`,
+      `SELECT id, phone, name FROM leads WHERE user_id = $1 AND deleted_at IS NULL`,
       [Number(userId)]
     );
     const leads = leadsResult.rows || [];
-    const exists = leads.some((row: any) => isSameLead(row.phone || '', digits));
-    if (exists) return;
+    const existing = leads.find((row: any) => isSameLead(row.phone || '', digits));
+    if (existing) {
+      const currentName = String(existing.name || '').trim();
+      const incomingName = (leadName || '').trim();
+      if (incomingName && (!currentName || currentName.startsWith('WhatsApp '))) {
+        try {
+          await query(
+            `UPDATE leads SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+            [incomingName, existing.id]
+          );
+        } catch (error) {
+          await query(
+            `UPDATE leads SET name = $1 WHERE id = $2`,
+            [incomingName, existing.id]
+          );
+        }
+      }
+      return;
+    }
 
     const name = leadName && leadName.trim().length > 0
       ? leadName.trim()
@@ -146,6 +249,8 @@ const ensureLeadForIncomingMessage = async (userId: string, phone: string, leadN
     }
   } catch (error) {
     console.warn('WhatsApp lead auto-create failed:', error);
+  } finally {
+    pendingLeadCreates.delete(pendingKey);
   }
 };
 
@@ -325,6 +430,16 @@ const extractLidJid = (record: any) => {
   return { lid, jid };
 };
 
+const storeLidPhoneFromRecord = (record: any, source: string) => {
+  const { lid } = extractLidJid(record);
+  if (!lid || !lid.endsWith('@lid')) return;
+  const rawPhone = record?.pn || record?.phone;
+  const digits = normalizePhone(String(rawPhone || ''));
+  if (!isLikelyPhone(digits)) return;
+  lidToPhone.set(lid, digits);
+  console.info('WhatsApp LID phone stored', { lid, phone: digits, source });
+};
+
 const storeLidMapping = (record: any, source: string) => {
   const { lid, jid } = extractLidJid(record);
   if (lid && jid && lid.endsWith('@lid') && jid.endsWith('@s.whatsapp.net')) {
@@ -385,19 +500,35 @@ const createSession = async (userId: string) => {
   socket.ev.on('creds.update', saveCreds);
   socket.ev.on('contacts.upsert', (contacts: any[]) => {
     if (!Array.isArray(contacts)) return;
-    contacts.forEach(contact => storeLidMapping(contact, 'contacts.upsert'));
+    contacts.forEach(contact => {
+      storeLidMapping(contact, 'contacts.upsert');
+      storeLidPhoneFromRecord(contact, 'contacts.upsert');
+      storeContactName(contact);
+    });
   });
   socket.ev.on('contacts.update', (contacts: any[]) => {
     if (!Array.isArray(contacts)) return;
-    contacts.forEach(contact => storeLidMapping(contact, 'contacts.update'));
+    contacts.forEach(contact => {
+      storeLidMapping(contact, 'contacts.update');
+      storeLidPhoneFromRecord(contact, 'contacts.update');
+      storeContactName(contact);
+    });
   });
   socket.ev.on('chats.upsert', (chats: any[]) => {
     if (!Array.isArray(chats)) return;
-    chats.forEach(chat => storeLidMapping(chat, 'chats.upsert'));
+    chats.forEach(chat => {
+      storeLidMapping(chat, 'chats.upsert');
+      storeLidPhoneFromRecord(chat, 'chats.upsert');
+      storeContactName(chat);
+    });
   });
   socket.ev.on('chats.update', (chats: any[]) => {
     if (!Array.isArray(chats)) return;
-    chats.forEach(chat => storeLidMapping(chat, 'chats.update'));
+    chats.forEach(chat => {
+      storeLidMapping(chat, 'chats.update');
+      storeLidPhoneFromRecord(chat, 'chats.update');
+      storeContactName(chat);
+    });
   });
   socket.ev.on('connection.update', (update: any) => {
     const { connection, qr, lastDisconnect } = update || {};
@@ -462,7 +593,7 @@ const createSession = async (userId: string) => {
     if (content?.videoMessage) return '[video]';
     if (content?.audioMessage) return '[audio]';
     if (content?.documentMessage) return '[documento]';
-    return '';
+    return '[mensagem]';
   };
 
   const getMediaPayload = (content: any) => {
@@ -497,7 +628,10 @@ const createSession = async (userId: string) => {
     });
     const fromMe = !!message.key?.fromMe;
     const remoteJid = message.key?.remoteJid;
-    if (!remoteJid || remoteJid.endsWith('@g.us') || remoteJid.endsWith('@broadcast')) return;
+    if (!remoteJid || isGroupJid(remoteJid)) return;
+    if (!shouldSyncMessage(userId, source, message)) {
+      return;
+    }
 
     const content = unwrap(message.message);
     if (!content) {
@@ -528,8 +662,11 @@ const createSession = async (userId: string) => {
     if (remoteJid.endsWith('@lid') && participant) {
       baseJid = participant;
     }
-    if (baseJid.endsWith('@lid')) {
-      const mapped = lidToJid.get(baseJid);
+
+    const isLidRemote = remoteJid.endsWith('@lid');
+    const lidCandidate = baseJid.endsWith('@lid') ? baseJid : (isLidRemote ? remoteJid : null);
+    if (lidCandidate) {
+      const mapped = lidToJid.get(lidCandidate);
       if (mapped) {
         baseJid = mapped;
       } else {
@@ -537,30 +674,56 @@ const createSession = async (userId: string) => {
           remoteJid,
           participant,
           baseJid,
+          lidCandidate,
           messageId: message.key?.id
         });
-        const cachedPhone = lidToPhone.get(baseJid);
-        const fallbackPhone = cachedPhone || lastOutboundPhoneByUser.get(userId);
-        if (!fallbackPhone) {
-          return;
+        const cachedPhone = lidToPhone.get(lidCandidate);
+        if (cachedPhone) {
+          baseJid = `${cachedPhone}@s.whatsapp.net`;
+          console.info('WhatsApp LID mapping fallback', {
+            baseJid,
+            phone: cachedPhone,
+            messageId: message.key?.id
+          });
+        } else {
+          const participantPhone = normalizePhone((participant || '').split('@')[0] || '');
+          if (isLikelyPhone(participantPhone)) {
+            baseJid = `${participantPhone}@s.whatsapp.net`;
+            console.info('WhatsApp LID fallback to participant phone', {
+              baseJid,
+              phone: participantPhone,
+              messageId: message.key?.id
+            });
+          } else {
+            const remoteJidPhone = normalizePhone((remoteJid || '').split('@')[0] || '');
+            if (isLikelyPhone(remoteJidPhone)) {
+              baseJid = `${remoteJidPhone}@s.whatsapp.net`;
+              console.info('WhatsApp LID fallback to remoteJid phone', {
+                baseJid,
+                phone: remoteJidPhone,
+                messageId: message.key?.id
+              });
+            } else {
+              console.warn('WhatsApp LID mapping unavailable, proceeding', {
+                remoteJid,
+                participant,
+                baseJid,
+                lidCandidate,
+                messageId: message.key?.id
+              });
+            }
+          }
         }
-        lidToPhone.set(baseJid, fallbackPhone);
-        baseJid = `${fallbackPhone}@s.whatsapp.net`;
-        console.info('WhatsApp LID mapping fallback', {
-          baseJid,
-          phone: fallbackPhone,
-          messageId: message.key?.id
-        });
       }
     }
     let phone = normalizePhone((baseJid || '').split('@')[0] || '');
-    if (baseJid.endsWith('@lid')) {
-      const cached = lidToPhone.get(baseJid);
+    if (baseJid.endsWith('@lid') || (isLidRemote && !phone)) {
+      const cached = lidToPhone.get(lidCandidate || baseJid);
       if (cached) {
         phone = cached;
       }
     }
-    if (!phone) {
+    if (!phone || !isLikelyPhone(phone)) {
       console.info('WhatsApp incoming without phone', {
         remoteJid,
         participant,
@@ -593,6 +756,10 @@ const createSession = async (userId: string) => {
         console.warn('WhatsApp media download failed:', error);
       }
     }
+    const messageTimestampMs = getMessageTimestampMs(message);
+    const receivedAt = messageTimestampMs
+      ? new Date(messageTimestampMs).toISOString()
+      : new Date().toISOString();
     const event: WhatsAppMessageEvent = {
       id: messageId,
       phone: normalizedPhone,
@@ -600,7 +767,7 @@ const createSession = async (userId: string) => {
       mediaUrl,
       mediaType,
       direction: fromMe ? 'out' : 'in',
-      at: new Date().toISOString()
+      at: receivedAt
     };
     console.info('WhatsApp incoming message', {
       remoteJid,
@@ -615,7 +782,7 @@ const createSession = async (userId: string) => {
     void saveMessage(userId, event);
     emitMessage(userId, event);
     if (!fromMe) {
-      await ensureLeadForIncomingMessage(userId, normalizedPhone, getIncomingLeadName(message));
+      await ensureLeadForIncomingMessage(userId, normalizedPhone, getIncomingLeadName(message, normalizedPhone));
     }
     void updateLeadStatusFromWhatsApp(userId, normalizedPhone, event.direction);
   };
@@ -837,6 +1004,32 @@ export const sendWhatsAppMedia = async (
   void updateLeadStatusFromWhatsApp(userId, digits, 'out');
 };
 
+export const getWhatsAppProfilePicture = async (userId: string, phone: string) => {
+  let session = sessions.get(userId);
+  if (!session) {
+    session = await createSession(userId);
+  }
+
+  if (session.status !== 'connected') {
+    const connected = await waitForConnected(userId);
+    if (!connected) {
+      throw new Error('WhatsApp não está conectado');
+    }
+  }
+
+  const digits = normalizePhone(phone);
+  if (!digits) {
+    throw new Error('Telefone inválido');
+  }
+  const jid = `${formatSendPhone(digits)}@s.whatsapp.net`;
+  try {
+    const url = await session.socket.profilePictureUrl(jid, 'image');
+    return url || null;
+  } catch (error) {
+    return null;
+  }
+};
+
 export const subscribeWhatsAppMessages = (userId: string, cb: (event: WhatsAppMessageEvent) => void) => {
   const set = subscribers.get(userId) || new Set();
   set.add(cb);
@@ -885,6 +1078,11 @@ export const getWhatsAppConversations = async (userId: string) => {
     [Number(userId)]
   );
   const leads = leadsResult.rows || [];
+  const deletedResult = await query(
+    `SELECT phone FROM leads WHERE user_id = $1 AND deleted_at IS NOT NULL`,
+    [Number(userId)]
+  );
+  const deletedLeads = deletedResult.rows || [];
 
   let rows: any[] = [];
   try {
@@ -913,6 +1111,9 @@ export const getWhatsAppConversations = async (userId: string) => {
   rows.forEach((row) => {
     const phone = normalizePhone(row.phone || '');
     if (!phone) return;
+    if (deletedLeads.some((lead: any) => isSameLead(lead.phone || '', phone))) {
+      return;
+    }
     const preview = row.text && String(row.text).trim().length > 0
       ? row.text
       : (row.mediaUrl || row.mediaType ? 'Mídia enviada' : '');

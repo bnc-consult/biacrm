@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
 import {
   FiPhone,
@@ -29,6 +29,7 @@ interface Lead {
   updated_at?: string;
   product?: string;
   custom_data?: any;
+  user_name?: string;
 }
 
 interface TimelineEvent {
@@ -36,6 +37,13 @@ interface TimelineEvent {
   date: string;
   description: string;
   source: string;
+}
+
+interface ScheduledItem {
+  id: number;
+  message: string;
+  scheduled_for: string;
+  status?: string | null;
 }
 
 const statusOptions = [
@@ -126,15 +134,28 @@ const getBackendStatus = (displayStatus: string, customData?: any): { status: st
 
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [scheduledContact, setScheduledContact] = useState('');
+  const [scheduledMessage, setScheduledMessage] = useState('');
+  const [isSchedulingContact, setIsSchedulingContact] = useState(false);
+  const [scheduledMessageConfirmed, setScheduledMessageConfirmed] = useState(false);
+  const [scheduledItems, setScheduledItems] = useState<ScheduledItem[]>([]);
+  const [showScheduledListModal, setShowScheduledListModal] = useState(false);
+  const [isDeletingScheduled, setIsDeletingScheduled] = useState(false);
+  const [visitDateTime, setVisitDateTime] = useState('');
+  const [isSavingVisitDate, setIsSavingVisitDate] = useState(false);
+  const [visitDateError, setVisitDateError] = useState<string | null>(null);
+  const [whatsappProfileUrl, setWhatsappProfileUrl] = useState<string | null>(null);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
-  const [showWhatsAppPanel, setShowWhatsAppPanel] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [isDeletingLead, setIsDeletingLead] = useState(false);
+  const [showWhatsAppPanel, setShowWhatsAppPanel] = useState(true);
   const [whatsappMessage, setWhatsappMessage] = useState('');
   const [whatsappFile, setWhatsappFile] = useState<File | null>(null);
   const [sendingWhatsAppMedia, setSendingWhatsAppMedia] = useState(false);
@@ -142,6 +163,9 @@ export default function LeadDetail() {
   const [whatsappIntegrationLoadedAt, setWhatsappIntegrationLoadedAt] = useState(0);
   const [whatsappThread, setWhatsappThread] = useState<{ id: string; text: string; direction: 'out' | 'in'; at: string; mediaUrl?: string | null; mediaType?: string | null }[]>([]);
   const whatsappChatRef = useRef<HTMLDivElement | null>(null);
+  const [showPhoneNumber, setShowPhoneNumber] = useState(false);
+  const [showCallHint, setShowCallHint] = useState(false);
+  const [copyPhoneSuccess, setCopyPhoneSuccess] = useState(false);
 
   useEffect(() => {
     if (id && !isNaN(parseInt(id))) {
@@ -174,6 +198,25 @@ export default function LeadDetail() {
   useEffect(() => {
     refreshWhatsAppIntegration();
   }, []);
+
+  useEffect(() => {
+    if (!lead || !lead.phone) {
+      setWhatsappProfileUrl(null);
+      return;
+    }
+    const isActive = refreshWhatsAppIntegration();
+    if (!isActive) {
+      setWhatsappProfileUrl(null);
+      return;
+    }
+    api.get('/integrations/whatsapp/profile-picture', { params: { phone: lead.phone } })
+      .then((response) => {
+        setWhatsappProfileUrl(response.data?.url || null);
+      })
+      .catch(() => {
+        setWhatsappProfileUrl(null);
+      });
+  }, [lead?.phone]);
 
   useEffect(() => {
     if (!showWhatsAppPanel || !lead) {
@@ -215,6 +258,46 @@ export default function LeadDetail() {
       }
     };
   }, [showWhatsAppPanel, lead]);
+
+  const formatPhoneForWhatsApp = (phone: string) => String(phone || '').replace(/\D/g, '');
+
+  const handleCallLead = async () => {
+    if (!lead?.phone) return;
+    setShowPhoneNumber(true);
+    setShowCallHint(true);
+    const phone = formatPhoneForWhatsApp(lead.phone);
+    if (!phone) return;
+    window.location.href = `https://wa.me/${phone}`;
+  };
+
+  const handleCopyPhone = async () => {
+    if (!lead?.phone) return;
+    const phone = formatPhoneForWhatsApp(lead.phone);
+    if (!phone) return;
+    try {
+      await navigator.clipboard.writeText(phone);
+      setCopyPhoneSuccess(true);
+      setTimeout(() => setCopyPhoneSuccess(false), 2000);
+    } catch (error) {
+      console.error('Erro ao copiar telefone:', error);
+    }
+  };
+
+  const handleDeleteLead = async () => {
+    if (!lead) return;
+    const confirmed = window.confirm('Deseja realmente excluir este lead?');
+    if (!confirmed) return;
+    try {
+      setIsDeletingLead(true);
+      await api.delete(`/leads/${lead.id}`);
+      navigate('/leads');
+    } catch (error) {
+      console.error('Erro ao excluir lead:', error);
+      alert('Não foi possível excluir o lead. Tente novamente.');
+    } finally {
+      setIsDeletingLead(false);
+    }
+  };
 
   useEffect(() => {
     if (!showWhatsAppPanel || !lead) {
@@ -340,6 +423,70 @@ export default function LeadDetail() {
     return { ...leadData, custom_data };
   };
 
+  useEffect(() => {
+    if (!lead) return;
+    const stored = lead.custom_data?.visitScheduledAt;
+    if (stored) {
+      setVisitDateTime(toInputDateTime(stored));
+    }
+  }, [lead]);
+
+  const loadScheduledMessage = async (leadId: number) => {
+    try {
+      const response = await api.get('/integrations/whatsapp/scheduled', { params: { leadId } });
+      const scheduled = response.data?.scheduled;
+      if (scheduled?.scheduled_for) {
+        setScheduledContact(toInputDateTime(scheduled.scheduled_for));
+        setScheduledMessage(scheduled.message || '');
+        setScheduledMessageConfirmed(true);
+        return;
+      }
+    } catch (error) {
+      console.error('Erro ao buscar agendamento:', error);
+    }
+    setScheduledMessageConfirmed(false);
+  };
+
+  const loadScheduledMessages = async (leadId: number) => {
+    try {
+      const response = await api.get('/integrations/whatsapp/scheduled-all', { params: { leadId } });
+      setScheduledItems(response.data?.scheduled || []);
+    } catch (error) {
+      console.error('Erro ao buscar agendamentos:', error);
+      setScheduledItems([]);
+    }
+  };
+
+  const handleDeleteScheduledItem = async (itemId: number) => {
+    if (!lead) return;
+    if (!window.confirm('Deseja realmente excluir esta programação?')) return;
+    try {
+      setIsDeletingScheduled(true);
+      await api.delete(`/integrations/whatsapp/scheduled/${itemId}`);
+      await loadScheduledMessages(lead.id);
+    } catch (error) {
+      console.error('Erro ao excluir programação:', error);
+      alert('Não foi possível excluir a programação.');
+    } finally {
+      setIsDeletingScheduled(false);
+    }
+  };
+
+  const handleDeleteAllScheduled = async () => {
+    if (!lead) return;
+    if (!window.confirm('Deseja realmente excluir todas as programações?')) return;
+    try {
+      setIsDeletingScheduled(true);
+      await api.delete(`/integrations/whatsapp/scheduled`, { params: { leadId: lead.id } });
+      await loadScheduledMessages(lead.id);
+    } catch (error) {
+      console.error('Erro ao excluir programações:', error);
+      alert('Não foi possível excluir as programações.');
+    } finally {
+      setIsDeletingScheduled(false);
+    }
+  };
+
   const fetchLeadDetail = async () => {
     try {
       // Primeiro tenta buscar o lead específico
@@ -347,25 +494,10 @@ export default function LeadDetail() {
         const response = await api.get(`/leads/${id}`);
         const parsedLead = parseLeadData(response.data);
         setLead(parsedLead);
-        
-        const displayStatus = getDisplayStatus(parsedLead);
-        const statusLabel = statusConfig[displayStatus]?.label || 'Sem Atendimento';
-        
-        // Simular timeline
-        setTimeline([
-          {
-            id: 1,
-            date: parsedLead.created_at,
-            description: `Lead ${parsedLead.name} entrou no status ${statusLabel}`,
-            source: 'SISTEMA',
-          },
-          {
-            id: 2,
-            date: parsedLead.created_at,
-            description: `Importação: O cliente foi adicionado em: ${formatDateTime(parsedLead.created_at)}`,
-            source: 'SISTEMA',
-          },
-        ]);
+        await loadScheduledMessage(parsedLead.id);
+        await loadScheduledMessages(parsedLead.id);
+        const historyResponse = await api.get(`/leads/${parsedLead.id}/history`);
+        setTimeline(historyResponse.data || []);
       } catch (error: any) {
         // Se não encontrar, busca na lista de leads
         if (error.response?.status === 404) {
@@ -374,24 +506,10 @@ export default function LeadDetail() {
           if (foundLead) {
             const parsedLead = parseLeadData(foundLead);
             setLead(parsedLead);
-            
-            const displayStatus = getDisplayStatus(parsedLead);
-            const statusLabel = statusConfig[displayStatus]?.label || 'Sem Atendimento';
-            
-            setTimeline([
-              {
-                id: 1,
-                date: parsedLead.created_at,
-                description: `Lead ${parsedLead.name} entrou no status ${statusLabel}`,
-                source: 'SISTEMA',
-              },
-              {
-                id: 2,
-                date: parsedLead.created_at,
-                description: `Importação: O cliente foi adicionado em: ${formatDateTime(parsedLead.created_at)}`,
-                source: 'SISTEMA',
-              },
-            ]);
+            await loadScheduledMessage(parsedLead.id);
+            await loadScheduledMessages(parsedLead.id);
+            const historyResponse = await api.get(`/leads/${parsedLead.id}/history`);
+            setTimeline(historyResponse.data || []);
           } else {
             console.error('Lead not found');
           }
@@ -429,11 +547,89 @@ export default function LeadDetail() {
     return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
   };
 
+  const getInitials = (value: string) => {
+    const parts = value.trim().split(' ').filter(Boolean);
+    if (parts.length === 0) return '';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  };
+
+  const toInputDateTime = (dateString: string) => {
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
+
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
     const hours = date.getHours().toString().padStart(2, '0');
     const minutes = date.getMinutes().toString().padStart(2, '0');
     return `${hours}:${minutes}`;
+  };
+
+  const getUserTimeZone = () => {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  };
+
+  const parseMessageDate = (dateString: string) => {
+    if (!dateString) return new Date(NaN);
+    const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(dateString);
+    if (hasTimezone) {
+      return new Date(dateString);
+    }
+    const normalized = dateString.includes('T')
+      ? dateString
+      : dateString.replace(' ', 'T');
+    return new Date(`${normalized}Z`);
+  };
+
+  const formatMessageDate = (date: Date) => {
+    if (Number.isNaN(date.getTime())) return '—';
+    const formatter = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: getUserTimeZone(),
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+    return formatter.format(date);
+  };
+
+  const formatMessageTime = (date: Date) => {
+    if (Number.isNaN(date.getTime())) return '—';
+    const formatter = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: getUserTimeZone(),
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    return formatter.format(date);
+  };
+
+  const getLatestMessageDate = (
+    messages: { at: string; direction?: 'out' | 'in' }[],
+    direction?: 'out' | 'in'
+  ) => {
+    let latest: Date | null = null;
+    messages.forEach((message) => {
+      if (!message.at) return;
+      if (direction && message.direction !== direction) return;
+      const currentDate = parseMessageDate(message.at);
+      const currentTime = currentDate.getTime();
+      if (Number.isNaN(currentTime)) return;
+      if (!latest) {
+        latest = currentDate;
+        return;
+      }
+      const latestTime = latest.getTime();
+      if (currentTime > latestTime) {
+        latest = currentDate;
+      }
+    });
+    return latest;
   };
 
   const handleStatusChange = async (displayStatus: string) => {
@@ -456,28 +652,10 @@ export default function LeadDetail() {
       // Disparar evento customizado para atualizar outras telas (como Andamento)
       window.dispatchEvent(new CustomEvent('leadUpdated', { detail: { leadId: lead.id } }));
       
-      // Adicionar evento à timeline
-      setTimeline(prev => [
-        {
-          id: Date.now(),
-          date: new Date().toISOString(),
-          description: `Status alterado para: ${statusConfig[displayStatus]?.label || displayStatus}`,
-          source: 'USUÁRIO',
-        },
-        ...prev
-      ]);
+      const historyResponse = await api.get(`/leads/${lead.id}/history`);
+      setTimeline(historyResponse.data || []);
     } catch (error) {
       console.error('Error updating status:', error);
-    }
-  };
-
-  const handleWhatsApp = () => {
-    if (!lead) return;
-    const isActive = refreshWhatsAppIntegration();
-    setWhatsappMessage(`Olá ${lead.name}, tudo bem?`);
-    setShowWhatsAppPanel(true);
-    if (!isActive) {
-      alert('Integração com o WhatsApp não está ativa. Crie a integração primeiro.');
     }
   };
 
@@ -532,6 +710,55 @@ export default function LeadDetail() {
     }
   };
 
+  const handleScheduleContact = async () => {
+    if (!lead) return;
+    if (!lead.phone) {
+      alert('Este lead não possui telefone.');
+      return;
+    }
+    if (!scheduledContact) {
+      alert('Selecione a data e hora do contato.');
+      return;
+    }
+    const message = scheduledMessage.trim();
+    if (!message) {
+      alert('Digite a mensagem automática.');
+      return;
+    }
+    const isActive = refreshWhatsAppIntegration();
+    if (!isActive) {
+      alert('Integração com o WhatsApp não está ativa. Crie a integração primeiro.');
+      return;
+    }
+    setIsSchedulingContact(true);
+    try {
+      await api.post('/integrations/whatsapp/schedule', {
+        phone: lead.phone,
+        message,
+        leadId: lead.id,
+        scheduled_for: new Date(scheduledContact).toISOString()
+      });
+      setScheduledMessageConfirmed(true);
+      setScheduledMessage('');
+      await loadScheduledMessages(lead.id);
+      setShowScheduleModal(false);
+      setTimeline(prev => [
+        {
+          id: Date.now(),
+          date: new Date().toISOString(),
+          description: `Contato programado em ${formatDateTime(scheduledContact)}.`,
+          source: 'USUÁRIO',
+        },
+        ...prev
+      ]);
+    } catch (error) {
+      console.error('Erro ao enviar mensagem automática:', error);
+      alert((error as any)?.response?.data?.message || (error as any)?.message || 'Erro ao enviar mensagem no WhatsApp');
+    } finally {
+      setIsSchedulingContact(false);
+    }
+  };
+
   const handleAddNote = async () => {
     if (!lead) return;
     
@@ -577,6 +804,50 @@ export default function LeadDetail() {
     }
   };
 
+  const handleSaveVisitDate = async () => {
+    if (!lead) return;
+    setVisitDateError(null);
+    if (!visitDateTime) {
+      setVisitDateError('Informe a data e hora da visita.');
+      return;
+    }
+    const visitDate = new Date(visitDateTime);
+    if (Number.isNaN(visitDate.getTime())) {
+      setVisitDateError('Data inválida. Informe uma data e hora válidas.');
+      return;
+    }
+    if (visitDate <= new Date()) {
+      setVisitDateError('Informe uma data e hora superior à atual.');
+      return;
+    }
+    setIsSavingVisitDate(true);
+    try {
+      const updatedCustomData = {
+        ...(lead.custom_data || {}),
+        visitScheduledAt: visitDate.toISOString()
+      };
+      const response = await api.put(`/leads/${lead.id}`, {
+        custom_data: updatedCustomData
+      });
+      const parsedLead = parseLeadData(response.data);
+      setLead(parsedLead);
+      setTimeline(prev => [
+        {
+          id: Date.now(),
+          date: new Date().toISOString(),
+          description: `Visita agendada para ${formatDateTime(visitDateTime)}.`,
+          source: 'USUÁRIO',
+        },
+        ...prev
+      ]);
+    } catch (error: any) {
+      console.error('Erro ao salvar visita:', error);
+      setVisitDateError(error.response?.data?.message || 'Erro ao salvar a data da visita.');
+    } finally {
+      setIsSavingVisitDate(false);
+    }
+  };
+
   const formatNotes = (notes?: string) => {
     if (!notes) return [];
     return notes.split('\n\n').filter(note => note.trim());
@@ -596,6 +867,8 @@ export default function LeadDetail() {
   // Obter o status de exibição baseado no status do backend
   const displayStatus = getDisplayStatus(lead);
   const currentStatus = statusConfig[displayStatus] || statusConfig.sem_atendimento;
+  const lastReceivedAt =
+    getLatestMessageDate(whatsappThread, 'in') || getLatestMessageDate(whatsappThread);
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -604,35 +877,64 @@ export default function LeadDetail() {
         {/* Lead Header */}
         <div className="bg-blue-600 text-white rounded-lg p-6 mb-6">
           <div className="flex items-start justify-between mb-4">
-            <div>
-              <h1 className="text-2xl font-bold mb-2">{lead.name}</h1>
-              <div className="text-sm text-blue-100 space-y-1">
-                <p>Criado em: {formatDate(lead.created_at)} às {formatTime(lead.created_at)}</p>
-                <p>Última conversão em: {formatDate(lead.updated_at || lead.created_at)} às {formatTime(lead.updated_at || lead.created_at)}</p>
+            <div className="flex items-start gap-4">
+              <div className="w-24 h-24 rounded-full bg-blue-500/30 flex items-center justify-center overflow-hidden border border-blue-400/40">
+                {whatsappProfileUrl ? (
+                  <img src={whatsappProfileUrl} alt="Foto do WhatsApp" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-white font-semibold text-lg">
+                    {getInitials(lead.name || 'Lead')}
+                  </span>
+                )}
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold mb-1">{lead.name}</h1>
+                <p className="text-sm text-blue-100">Lead #{lead.id}</p>
+                <p className="text-sm text-blue-100">{lead.phone}</p>
+                <div className="text-sm text-blue-100 space-y-1 mt-2">
+                  <p>Criado em: {formatDate(lead.created_at)} às {formatTime(lead.created_at)}</p>
+                  <p>
+                    Última mensagem recebida em: {lastReceivedAt ? formatMessageDate(lastReceivedAt) : '—'}
+                    {lastReceivedAt ? ` às ${formatMessageTime(lastReceivedAt)}` : ''}
+                  </p>
+                </div>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <button className="p-2 hover:bg-blue-700 rounded-lg transition-colors">
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleCallLead}
+                  className="p-2 hover:bg-blue-700 rounded-lg transition-colors"
+                >
                 <FiPhone className="w-5 h-5" />
-              </button>
-              <button 
-                onClick={handleWhatsApp}
-                className="p-2 hover:bg-blue-700 rounded-lg transition-colors"
-              >
-                <FiMessageCircle className="w-5 h-5" />
-              </button>
-              <button className="p-2 hover:bg-blue-700 rounded-lg transition-colors">
-                <FiMail className="w-5 h-5" />
-              </button>
-              <button className="p-2 hover:bg-blue-700 rounded-lg transition-colors">
-                <FiEye className="w-5 h-5" />
-              </button>
-              <button className="p-2 hover:bg-blue-700 rounded-lg transition-colors">
-                <FiEdit className="w-5 h-5" />
-              </button>
-              <button className="p-2 hover:bg-blue-700 rounded-lg transition-colors">
-                <FiTrash2 className="w-5 h-5" />
-              </button>
+                </button>
+                <button
+                  onClick={handleDeleteLead}
+                  disabled={isDeletingLead}
+                  className="p-2 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-60"
+                  title="Excluir lead"
+                >
+                  <FiTrash2 className="w-5 h-5" />
+                </button>
+              </div>
+              {showPhoneNumber && lead.phone && (
+                <div className="text-xs text-blue-100 bg-blue-700/60 px-3 py-1 rounded-full">
+                  Telefone: {lead.phone}
+                </div>
+              )}
+              {showCallHint && lead.phone && (
+                <div className="text-xs text-blue-100 bg-blue-700/60 px-3 py-2 rounded-lg max-w-[320px]">
+                  <div className="mb-2">
+                    O WhatsApp foi aberto. Para ligar, clique no ícone de telefone dentro do chat.
+                  </div>
+                  <button
+                    onClick={handleCopyPhone}
+                    className="px-2 py-1 rounded bg-blue-600/80 hover:bg-blue-600 text-white"
+                  >
+                    {copyPhoneSuccess ? 'Telefone copiado' : 'Copiar telefone'}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -644,6 +946,10 @@ export default function LeadDetail() {
             <div className="bg-white rounded-lg shadow-md p-6">
               <h2 className="text-lg font-bold text-gray-900 mb-4">Detalhes da conversão</h2>
               <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-700">Responsável pelo lead</label>
+                  <p className="mt-1 text-sm text-gray-900">{lead.user_name || 'Sem responsável definido'}</p>
+                </div>
                 <div>
                   <label className="text-sm font-medium text-gray-700">Origem</label>
                   <div className="mt-1 flex items-center gap-2">
@@ -669,13 +975,37 @@ export default function LeadDetail() {
                     ) : (
                       <p className="text-sm text-gray-500 italic">Nenhuma nota adicionada ainda.</p>
                     )}
-                    <button 
-                      onClick={() => setShowNoteModal(true)}
-                      className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                      <FiPlus className="w-4 h-4" />
-                      <span className="text-sm">Adicionar nota</span>
-                    </button>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button 
+                        onClick={() => setShowNoteModal(true)}
+                        className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
+                      >
+                        <FiPlus className="w-4 h-4" />
+                        <span className="text-sm">Adicionar nota</span>
+                      </button>
+                      <button
+                        onClick={() => setShowScheduleModal(true)}
+                        className="flex items-center gap-2 px-3 py-2 bg-white text-blue-700 border border-blue-600 rounded-lg hover:bg-blue-50 transition-colors whitespace-nowrap"
+                      >
+                        <FiCalendar className="w-4 h-4" />
+                        <span className="text-sm">Programar contato</span>
+                        <span
+                          className={`inline-flex items-center justify-center w-2.5 h-2.5 rounded-full ${
+                            scheduledItems.length > 0
+                              ? 'bg-emerald-500 animate-pulse'
+                              : 'bg-red-500'
+                          }`}
+                          title={scheduledItems.length > 0 ? 'Há programações' : 'Sem programações'}
+                        />
+                      </button>
+                      <button
+                        onClick={() => setShowScheduledListModal(true)}
+                        className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
+                      >
+                        <FiEye className="w-4 h-4" />
+                        <span className="text-sm">Visualizar programações</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -695,25 +1025,58 @@ export default function LeadDetail() {
                     {currentStatus.label}
                   </span>
                 </div>
+                {displayStatus === 'visita_agendada' && (
+                  <div className="mt-4 space-y-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Data e hora da visita
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={visitDateTime}
+                      onChange={(e) => setVisitDateTime(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    {visitDateError && (
+                      <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+                        {visitDateError}
+                      </div>
+                    )}
+                    <button
+                      onClick={handleSaveVisitDate}
+                      disabled={isSavingVisitDate}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50"
+                    >
+                      {isSavingVisitDate ? 'Salvando...' : 'Salvar visita'}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Campos personalizados */}
+            {/* Alterar status do lead */}
             <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-lg font-bold text-gray-900 mb-4">Campos personalizados</h2>
-              <div className="border border-gray-200 rounded-lg p-4">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center">
-                    <span className="text-white font-bold text-sm">S</span>
-                  </div>
-                  <span className="text-sm font-medium text-gray-900">Smart Broker</span>
-                </div>
-                <p className="text-sm text-gray-600">
-                  Análise inteligente de atendimento
-                </p>
-                <p className="text-sm text-gray-500 mt-2">
-                  Ainda não temos informações sobre o perfil do lead.
-                </p>
+              <h2 className="text-lg font-bold text-gray-900 mb-4">Alterar status do lead</h2>
+              <div className="space-y-2">
+                {statusOptions.map((status) => {
+                  const isSelected = displayStatus === status.id;
+                  return (
+                    <button
+                      key={status.id}
+                      onClick={() => handleStatusChange(status.id)}
+                      className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg transition-colors ${
+                        isSelected
+                          ? 'bg-blue-50 border-2 border-blue-600'
+                          : 'border border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div
+                        className="w-4 h-4 rounded flex-shrink-0"
+                        style={{ backgroundColor: status.color }}
+                      />
+                      <span className="text-sm font-medium text-gray-900">{status.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -753,72 +1116,12 @@ export default function LeadDetail() {
                     </div>
                   </div>
                 ))}
-                <div className="flex items-center gap-2 mt-4 pt-4 border-t border-gray-200">
-                  <button 
-                    onClick={() => setShowNoteModal(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    <FiMic className="w-4 h-4" />
-                    <span className="text-sm">+ Adicionar nota</span>
-                  </button>
-                </div>
               </div>
             </div>
           </div>
 
           {/* Right Sidebar */}
           <div className="space-y-6">
-            {/* Alert */}
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-              <div className="flex items-center gap-2">
-                <FiAlertTriangle className="w-5 h-5 text-orange-600" />
-                <span className="text-sm font-medium text-orange-900">
-                  ▲ Lead sem ação agendada
-                </span>
-              </div>
-            </div>
-
-            {/* Programar contato */}
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <h3 className="text-sm font-bold text-gray-900 mb-3">Programar contato</h3>
-              <div className="relative">
-                <FiCalendar className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                <input
-                  type="datetime-local"
-                  value={scheduledContact}
-                  onChange={(e) => setScheduledContact(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-
-            {/* Alterar status do lead */}
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <h3 className="text-sm font-bold text-gray-900 mb-4">Alterar status do lead</h3>
-              <div className="space-y-2">
-                {statusOptions.map((status) => {
-                  const isSelected = displayStatus === status.id;
-                  return (
-                    <button
-                      key={status.id}
-                      onClick={() => handleStatusChange(status.id)}
-                      className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg transition-colors ${
-                        isSelected
-                          ? 'bg-blue-50 border-2 border-blue-600'
-                          : 'border border-gray-200 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div
-                        className="w-4 h-4 rounded flex-shrink-0"
-                        style={{ backgroundColor: status.color }}
-                      />
-                      <span className="text-sm font-medium text-gray-900">{status.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* WhatsApp */}
             {showWhatsAppPanel && (
               <div className="bg-white rounded-lg shadow-md p-6">
@@ -841,7 +1144,7 @@ export default function LeadDetail() {
                   <div className="text-xs text-gray-500">
                     Última verificação: {whatsappIntegrationLoadedAt ? new Date(whatsappIntegrationLoadedAt).toLocaleString('pt-BR') : '—'}
                   </div>
-                  <div ref={whatsappChatRef} className="border border-gray-200 rounded-lg p-3 max-h-56 overflow-y-auto bg-gray-50">
+                  <div ref={whatsappChatRef} className="border border-gray-200 rounded-lg p-3 h-[28rem] max-h-[28rem] overflow-y-auto bg-gray-50">
                     {whatsappThread.length === 0 ? (
                       <div className="text-xs text-gray-500">Nenhuma mensagem enviada ainda.</div>
                     ) : (
@@ -941,6 +1244,124 @@ export default function LeadDetail() {
             )}
           </div>
         </div>
+
+        {showScheduleModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-gray-900">Programar contato</h2>
+                <button
+                  onClick={() => setShowScheduleModal(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  title="Fechar"
+                >
+                  <FiX className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="space-y-4">
+                <div className="relative">
+                  <FiCalendar className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <input
+                    type="datetime-local"
+                    value={scheduledContact}
+                    onChange={(e) => {
+                      setScheduledContact(e.target.value);
+                      setScheduledMessageConfirmed(false);
+                    }}
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Mensagem automática
+                  </label>
+                  <textarea
+                    value={scheduledMessage}
+                    onChange={(e) => setScheduledMessage(e.target.value)}
+                    rows={4}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm"
+                    placeholder="Digite a mensagem que será enviada..."
+                  />
+                </div>
+              </div>
+              <div className="mt-6 flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setShowScheduleModal(false)}
+                  className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleScheduleContact}
+                  disabled={isSchedulingContact}
+                  className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {isSchedulingContact ? 'Enviando...' : 'Programar contato'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showScheduledListModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-gray-900">Programações</h2>
+                <button
+                  onClick={() => setShowScheduledListModal(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  title="Fechar"
+                >
+                  <FiX className="w-5 h-5" />
+                </button>
+              </div>
+              {scheduledItems.length === 0 ? (
+                <div className="text-sm text-gray-500">Nenhuma programação encontrada.</div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-end mb-3">
+                    <button
+                      onClick={handleDeleteAllScheduled}
+                      disabled={isDeletingScheduled}
+                      className="px-3 py-1 text-xs rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      Excluir todas
+                    </button>
+                  </div>
+                  <div className="space-y-3 max-h-[360px] overflow-y-auto">
+                    {scheduledItems.map((item) => (
+                      <div key={item.id} className="border border-gray-200 rounded-lg p-3">
+                        <div className="flex items-center justify-between text-xs text-gray-500">
+                          <span>{formatDateTime(item.scheduled_for)}</span>
+                          <span>{item.status || 'pending'}</span>
+                        </div>
+                        <p className="text-sm text-gray-700 mt-2 whitespace-pre-wrap">{item.message}</p>
+                        <div className="mt-3 flex items-center justify-end">
+                          <button
+                            onClick={() => handleDeleteScheduledItem(item.id)}
+                            disabled={isDeletingScheduled}
+                            className="px-3 py-1 text-xs rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          >
+                            Excluir
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              <div className="mt-6 flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setShowScheduledListModal(false)}
+                  className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Modal de Adicionar Nota */}

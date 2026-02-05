@@ -8,6 +8,7 @@ const connection_1 = require("../database/connection");
 const auth_1 = require("../middleware/auth");
 const multer_1 = __importDefault(require("multer"));
 const csv_parser_1 = __importDefault(require("csv-parser"));
+const xlsx_1 = __importDefault(require("xlsx"));
 const stream_1 = require("stream");
 const router = express_1.default.Router();
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
@@ -16,18 +17,28 @@ const getPhoneVariants = (digits) => {
     const variants = new Set();
     if (!digits)
         return variants;
+    const addWithAndWithoutNinth = (localDigits) => {
+        if (!localDigits)
+            return;
+        variants.add(localDigits);
+        variants.add(`55${localDigits}`);
+        if (localDigits.length === 11 && localDigits[2] === '9') {
+            const withoutNinth = `${localDigits.slice(0, 2)}${localDigits.slice(3)}`;
+            variants.add(withoutNinth);
+            variants.add(`55${withoutNinth}`);
+        }
+        else if (localDigits.length === 10) {
+            const withNinth = `${localDigits.slice(0, 2)}9${localDigits.slice(2)}`;
+            variants.add(withNinth);
+            variants.add(`55${withNinth}`);
+        }
+    };
     variants.add(digits);
     if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
-        variants.add(digits.slice(2));
+        addWithAndWithoutNinth(digits.slice(2));
     }
-    if (digits.length === 10 || digits.length === 11) {
-        variants.add(`55${digits}`);
-    }
-    if (digits.length === 11 && digits[2] === '9') {
-        variants.add(`${digits.slice(0, 2)}${digits.slice(3)}`);
-    }
-    else if (digits.length === 10) {
-        variants.add(`${digits.slice(0, 2)}9${digits.slice(2)}`);
+    else if (digits.length === 10 || digits.length === 11) {
+        addWithAndWithoutNinth(digits);
     }
     return variants;
 };
@@ -53,12 +64,158 @@ const isSameLead = (storedPhone, leadPhone) => {
     }
     return false;
 };
+const normalizeHeader = (header) => (header || '').replace(/^\uFEFF/, '').trim();
+const normalizeHeaderKey = (header) => normalizeHeader(header).toLowerCase();
+const getField = (row, keys) => {
+    for (const key of keys) {
+        const value = row[key];
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+            return String(value).trim();
+        }
+    }
+    return '';
+};
+const parseTags = (value) => {
+    if (!value)
+        return [];
+    if (Array.isArray(value))
+        return value;
+    return String(value)
+        .split(',')
+        .map(tag => tag.trim())
+        .filter(Boolean);
+};
+const NAME_KEYS = [
+    'nome completo',
+    'lead título',
+    'nome',
+    'pessoa de contato',
+    'contato da empresa',
+    'contato principal',
+    "empresa lead 's",
+    'empresa do contato',
+];
+const PHONE_KEYS = [
+    'celular',
+    'celular (contato)',
+    'telefone comercial',
+    'telefone comercial (contato)',
+    'tel. direto com.',
+    'tel. direto com. (contato)',
+    'telefone residencial',
+    'telefone residencial (contato)',
+    'outro telefone',
+    'outro telefone (contato)',
+    'whatsapp',
+    'telefone',
+    'phone',
+];
+const EMAIL_KEYS = [
+    'email comercial',
+    'email comercial (contato)',
+    'email pessoal',
+    'email pessoal (contato)',
+    'outro email',
+    'outro email (contato)',
+    'e-mail',
+    'email',
+];
+const TAGS_KEYS = ['tags', 'lead tags'];
+const ORIGIN_KEYS = ['fonte do lead', 'utm_source'];
+const validateHeaders = (headers) => {
+    const normalized = headers.map(normalizeHeaderKey);
+    const missing = [];
+    if (!normalized.some((header) => NAME_KEYS.includes(header))) {
+        missing.push('Nome');
+    }
+    if (!normalized.some((header) => PHONE_KEYS.includes(header))) {
+        missing.push('Telefone');
+    }
+    return { ok: missing.length === 0, missing };
+};
+const mapRowToLead = (row) => {
+    const name = getField(row, [
+        ...NAME_KEYS,
+    ]);
+    const phone = getField(row, [
+        ...PHONE_KEYS,
+    ]);
+    const email = getField(row, [
+        ...EMAIL_KEYS,
+    ]);
+    const origin = getField(row, [
+        ...ORIGIN_KEYS,
+    ]) || 'manual';
+    const tags = parseTags(getField(row, TAGS_KEYS));
+    const custom_data = {
+        ...(row['etapa do lead'] ? { lead_stage: row['etapa do lead'] } : {}),
+        ...(row['funil de vendas'] ? { funnel: row['funil de vendas'] } : {}),
+        ...(row['lead usuário responsável'] ? { lead_owner: row['lead usuário responsável'] } : {}),
+        ...(row['empresa do contato'] ? { contact_company: row['empresa do contato'] } : {}),
+        ...(row["empresa lead 's"] ? { lead_company: row["empresa lead 's"] } : {}),
+        ...(row['próxima tarefa'] ? { next_task: row['próxima tarefa'] } : {}),
+        ...(row['fechada em'] ? { closed_at: row['fechada em'] } : {}),
+        ...(row['obs'] ? { notes: row['obs'] } : {}),
+        ...(row['etapa'] ? { stage: row['etapa'] } : {}),
+        ...(row['local_interesse'] ? { local_interesse: row['local_interesse'] } : {}),
+        ...(row['local_intersse'] ? { local_intersse: row['local_intersse'] } : {}),
+        ...(row['tipo_imovel'] ? { tipo_imovel: row['tipo_imovel'] } : {}),
+        ...(row['interesse'] ? { interesse: row['interesse'] } : {}),
+        ...(row['posição (contato)'] ? { contact_position: row['posição (contato)'] } : {}),
+        raw_import: row,
+    };
+    return {
+        name: name || phone,
+        phone,
+        email,
+        origin,
+        status: 'novo_lead',
+        custom_data,
+        tags
+    };
+};
+const buildRowsFromXlsx = (buffer) => {
+    const workbook = xlsx_1.default.read(buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName)
+        return [];
+    const sheet = workbook.Sheets[sheetName];
+    const rows = xlsx_1.default.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+    if (!rows.length)
+        return [];
+    const headers = (rows[0] || []).map((header) => normalizeHeaderKey(String(header)));
+    return rows.slice(1).reduce((acc, row) => {
+        if (!row || row.every((cell) => String(cell || '').trim() === '')) {
+            return acc;
+        }
+        const mapped = {};
+        headers.forEach((header, index) => {
+            if (header) {
+                mapped[header] = row[index];
+            }
+        });
+        acc.push(mapped);
+        return acc;
+    }, []);
+};
 // Get all leads
 router.get('/', auth_1.authenticate, async (req, res) => {
     try {
         const { status, search, origin } = req.query;
         let sql = 'SELECT l.*, u.name as user_name FROM leads l LEFT JOIN users u ON l.user_id = u.id WHERE l.deleted_at IS NULL';
         const params = [];
+        let isAdmin = false;
+        let companyUserIds = [];
+        const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
+        if (currentUserId) {
+            const userResult = await (0, connection_1.query)('SELECT id, role, company_id FROM users WHERE id = ?', [currentUserId]);
+            const currentUser = userResult.rows && userResult.rows[0];
+            isAdmin = currentUser?.role === 'admin';
+            if (!isAdmin && currentUser?.company_id) {
+                const companyUsers = await (0, connection_1.query)('SELECT id FROM users WHERE company_id = ?', [currentUser.company_id]);
+                companyUserIds = (companyUsers.rows || []).map((row) => Number(row.id)).filter(Boolean);
+            }
+        }
         if (status) {
             sql += ' AND l.status = ?';
             params.push(status);
@@ -72,10 +229,17 @@ router.get('/', auth_1.authenticate, async (req, res) => {
             const searchTerm = `%${search}%`;
             params.push(searchTerm, searchTerm, searchTerm);
         }
-        // If user is not admin, filter by user_id
-        if (!req.user || req.user.role !== 'admin') {
-            sql += ' AND (l.user_id = ? OR l.user_id IS NULL)';
-            params.push((req.user && req.user.id));
+        // If user is not admin, filter by company users (or own leads if no company)
+        if (!isAdmin) {
+            if (companyUserIds.length > 0) {
+                const placeholders = companyUserIds.map(() => '?').join(', ');
+                sql += ` AND l.user_id IN (${placeholders})`;
+                params.push(...companyUserIds);
+            }
+            else if (currentUserId) {
+                sql += ' AND l.user_id = ?';
+                params.push(currentUserId);
+            }
         }
         sql += ' ORDER BY l.created_at DESC';
         const result = await (0, connection_1.query)(sql, params);
@@ -99,9 +263,8 @@ router.get('/', auth_1.authenticate, async (req, res) => {
             }
             return row;
         });
-        const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
         let unreadRows = [];
-        if (req.user && req.user.role === 'admin') {
+        if (isAdmin) {
             const userIds = Array.from(new Set(parsedRows.map((row) => Number(row.user_id)).filter(Boolean)));
             if (userIds.length > 0) {
                 const placeholders = userIds.map((_, index) => `$${index + 1}`).join(', ');
@@ -113,6 +276,16 @@ router.get('/', auth_1.authenticate, async (req, res) => {
            GROUP BY user_id, phone`, userIds);
                 unreadRows = unreadResult.rows || [];
             }
+        }
+        else if (companyUserIds.length > 0) {
+            const placeholders = companyUserIds.map((_, index) => `$${index + 1}`).join(', ');
+            const unreadResult = await (0, connection_1.query)(`SELECT phone, user_id, COUNT(*) as count
+         FROM whatsapp_messages
+         WHERE user_id IN (${placeholders})
+           AND direction = 'in'
+           AND (is_read = 0 OR is_read IS NULL)
+         GROUP BY user_id, phone`, companyUserIds);
+            unreadRows = unreadResult.rows || [];
         }
         else if (currentUserId) {
             const unreadResult = await (0, connection_1.query)(`SELECT phone, user_id, COUNT(*) as count
@@ -153,11 +326,34 @@ router.get('/', auth_1.authenticate, async (req, res) => {
 router.get('/:id', auth_1.authenticate, async (req, res) => {
     try {
         const { id } = req.params;
+        const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
+        let isAdmin = false;
+        let companyUserIds = [];
+        if (currentUserId) {
+            const userResult = await (0, connection_1.query)('SELECT id, role, company_id FROM users WHERE id = ?', [currentUserId]);
+            const currentUser = userResult.rows && userResult.rows[0];
+            isAdmin = currentUser?.role === 'admin';
+            if (!isAdmin && currentUser?.company_id) {
+                const companyUsers = await (0, connection_1.query)('SELECT id FROM users WHERE company_id = ?', [currentUser.company_id]);
+                companyUserIds = (companyUsers.rows || []).map((row) => Number(row.id)).filter(Boolean);
+            }
+        }
         const leadResult = await (0, connection_1.query)('SELECT l.*, u.name as user_name FROM leads l LEFT JOIN users u ON l.user_id = u.id WHERE l.id = ? AND l.deleted_at IS NULL', [id]);
         if (leadResult.rows.length === 0) {
             return res.status(404).json({ message: 'Lead não encontrado' });
         }
         const lead = leadResult.rows[0];
+        if (!isAdmin) {
+            const leadUserId = lead.user_id ? Number(lead.user_id) : null;
+            if (companyUserIds.length > 0) {
+                if (!leadUserId || !companyUserIds.includes(leadUserId)) {
+                    return res.status(403).json({ message: 'Acesso negado' });
+                }
+            }
+            else if (currentUserId && leadUserId !== currentUserId) {
+                return res.status(403).json({ message: 'Acesso negado' });
+            }
+        }
         // Parse JSON fields from SQLite
         if (lead.custom_data && typeof lead.custom_data === 'string') {
             try {
@@ -176,12 +372,25 @@ router.get('/:id', auth_1.authenticate, async (req, res) => {
             }
         }
         // Get history
-        const historyResult = await (0, connection_1.query)('SELECT h.*, u.name as user_name FROM lead_history h LEFT JOIN users u ON h.user_id = u.id WHERE h.lead_id = ? ORDER BY h.created_at DESC', [id]);
-        lead.history = historyResult.rows;
         res.json(lead);
     }
     catch (error) {
         console.error('Get lead error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+router.get('/:id/history', auth_1.authenticate, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const historyResult = await (0, connection_1.query)('SELECT h.id, h.created_at as date, h.description, u.name as source FROM lead_history h LEFT JOIN users u ON h.user_id = u.id WHERE h.lead_id = ? ORDER BY h.created_at DESC', [id]);
+        const rows = (historyResult.rows || []).map((row) => ({
+            ...row,
+            source: row.source || 'SISTEMA'
+        }));
+        res.json(rows);
+    }
+    catch (error) {
+        console.error('Get lead history error:', error);
         res.status(500).json({ message: error.message });
     }
 });
@@ -228,12 +437,55 @@ router.put('/:id', auth_1.authenticate, async (req, res) => {
     try {
         const { id } = req.params;
         const { name, phone, email, status, origin, custom_data, tags, notes } = req.body;
+        const actorId = req.user && req.user.id ? Number(req.user.id) : null;
+        let actorName = 'Usuário';
+        if (actorId) {
+            const actorResult = await (0, connection_1.query)('SELECT name FROM users WHERE id = ?', [actorId]);
+            actorName = actorResult.rows[0]?.name || actorName;
+        }
         // Get current lead
         const currentResult = await (0, connection_1.query)('SELECT * FROM leads WHERE id = ? AND deleted_at IS NULL', [id]);
         if (currentResult.rows.length === 0) {
             return res.status(404).json({ message: 'Lead não encontrado' });
         }
         const currentLead = currentResult.rows[0];
+        const parseCustomData = (value) => {
+            if (!value)
+                return {};
+            if (typeof value === 'string') {
+                try {
+                    return JSON.parse(value);
+                }
+                catch (e) {
+                    return {};
+                }
+            }
+            return value;
+        };
+        const currentCustomData = parseCustomData(currentLead.custom_data);
+        const nextCustomData = custom_data !== undefined ? parseCustomData(custom_data) : currentCustomData;
+        const getDisplayLabel = (statusValue, customDataValue) => {
+            if (statusValue === 'fechamento') {
+                const display = customDataValue?.displayStatus;
+                if (display === 'visita_concluida')
+                    return 'Visita Concluída';
+                if (display === 'venda_ganha')
+                    return 'Venda Ganha';
+                return 'Venda Ganha';
+            }
+            if (statusValue === 'perdido') {
+                const display = customDataValue?.displayStatus;
+                if (display === 'proposta')
+                    return 'Proposta';
+                return 'Finalizado';
+            }
+            const map = {
+                novo_lead: 'Sem Atendimento',
+                em_contato: 'Em Atendimento',
+                proposta_enviada: 'Visita Agendada'
+            };
+            return map[statusValue] || statusValue;
+        };
         // Update lead
         const updateFields = [];
         const values = [];
@@ -252,6 +504,10 @@ router.put('/:id', auth_1.authenticate, async (req, res) => {
         if (status !== undefined) {
             updateFields.push('status = ?');
             values.push(status);
+            if (actorId) {
+                updateFields.push('user_id = ?');
+                values.push(actorId);
+            }
         }
         if (origin !== undefined) {
             updateFields.push('origin = ?');
@@ -272,7 +528,7 @@ router.put('/:id', auth_1.authenticate, async (req, res) => {
         updateFields.push('updated_at = CURRENT_TIMESTAMP');
         values.push(id);
         await (0, connection_1.query)(`UPDATE leads SET ${updateFields.join(', ')} WHERE id = ?`, values);
-        const result = await (0, connection_1.query)('SELECT * FROM leads WHERE id = ?', [id]);
+        const result = await (0, connection_1.query)('SELECT l.*, u.name as user_name FROM leads l LEFT JOIN users u ON l.user_id = u.id WHERE l.id = ?', [id]);
         const updatedLead = result.rows[0];
         // Parse JSON fields from SQLite
         if (updatedLead.custom_data && typeof updatedLead.custom_data === 'string') {
@@ -293,10 +549,19 @@ router.put('/:id', auth_1.authenticate, async (req, res) => {
         }
         // Add to history if status changed
         if (status && status !== currentLead.status) {
-            await (0, connection_1.query)('INSERT INTO lead_history (lead_id, user_id, action, description, old_status, new_status) VALUES (?, ?, ?, ?, ?, ?)', [id, (req.user && req.user.id), 'status_changed', `Status alterado de ${currentLead.status} para ${status}`, currentLead.status, status]);
+            const oldLabel = getDisplayLabel(currentLead.status, currentCustomData);
+            const newLabel = getDisplayLabel(status, nextCustomData);
+            await (0, connection_1.query)('INSERT INTO lead_history (lead_id, user_id, action, description, old_status, new_status) VALUES (?, ?, ?, ?, ?, ?)', [
+                id,
+                actorId,
+                'status_changed',
+                `Status alterado de ${oldLabel} para ${newLabel} por ${actorName}`,
+                currentLead.status,
+                status
+            ]);
         }
         else {
-            await (0, connection_1.query)('INSERT INTO lead_history (lead_id, user_id, action, description) VALUES (?, ?, ?, ?)', [id, (req.user && req.user.id), 'updated', 'Lead atualizado']);
+            await (0, connection_1.query)('INSERT INTO lead_history (lead_id, user_id, action, description) VALUES (?, ?, ?, ?)', [id, actorId, 'updated', `Lead atualizado por ${actorName}`]);
         }
         res.json(updatedLead);
     }
@@ -327,6 +592,22 @@ router.delete('/:id', auth_1.authenticate, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+// Hard delete lead (for tests)
+router.delete('/:id/hard-delete', auth_1.authenticate, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await (0, connection_1.query)('SELECT * FROM leads WHERE id = ?', [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'Lead não encontrado' });
+        }
+        await (0, connection_1.query)('DELETE FROM leads WHERE id = ?', [id]);
+        res.json({ message: 'Lead removido do banco com sucesso' });
+    }
+    catch (error) {
+        console.error('Hard delete lead error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
 // Import CSV
 router.post('/import', auth_1.authenticate, upload.single('file'), async (req, res) => {
     try {
@@ -335,59 +616,92 @@ router.post('/import', auth_1.authenticate, upload.single('file'), async (req, r
         }
         const leads = [];
         const stream = stream_1.Readable.from(req.file.buffer.toString());
-        stream
-            .pipe((0, csv_parser_1.default)())
-            .on('data', (row) => {
-            leads.push({
-                name: row.name || row.nome || '',
-                phone: row.phone || row.telefone || row.phone || '',
-                email: row.email || '',
-                origin: row.origin || row.origem || 'manual',
-                status: 'novo_lead',
-                custom_data: {},
-                tags: []
+        const isExcel = /\.(xlsx|xls)$/i.test(req.file.originalname || '')
+            || ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel']
+                .includes(req.file.mimetype || '');
+        const finalizeImport = async () => {
+            if (!leads.length) {
+                return res.status(400).json({ message: 'Nenhum lead válido encontrado no arquivo' });
+            }
+            const insertedLeads = [];
+            for (const leadData of leads) {
+                if (leadData.name && leadData.phone) {
+                    const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, user_id, custom_data, tags)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [leadData.name, leadData.phone, leadData.email, leadData.status, leadData.origin, (req.user && req.user.id), JSON.stringify(leadData.custom_data), JSON.stringify(leadData.tags)]);
+                    const insertedId = (result.rows[0] && result.rows[0].lastInsertRowid) || (result.rows[0] && result.rows[0].id);
+                    const leadResult = await (0, connection_1.query)('SELECT * FROM leads WHERE id = ?', [insertedId]);
+                    const insertedLead = leadResult.rows[0];
+                    // Parse JSON fields from SQLite
+                    if (insertedLead.custom_data && typeof insertedLead.custom_data === 'string') {
+                        try {
+                            insertedLead.custom_data = JSON.parse(insertedLead.custom_data);
+                        }
+                        catch (e) {
+                            insertedLead.custom_data = {};
+                        }
+                    }
+                    if (insertedLead.tags && typeof insertedLead.tags === 'string') {
+                        try {
+                            insertedLead.tags = JSON.parse(insertedLead.tags);
+                        }
+                        catch (e) {
+                            insertedLead.tags = [];
+                        }
+                    }
+                    insertedLeads.push(insertedLead);
+                    // Add to history
+                    await (0, connection_1.query)('INSERT INTO lead_history (lead_id, user_id, action, description) VALUES (?, ?, ?, ?)', [insertedId, (req.user && req.user.id), 'imported', 'Lead importado via CSV/XLSX']);
+                }
+            }
+            if (insertedLeads.length === 0) {
+                return res.status(400).json({ message: 'Nenhum lead válido encontrado no arquivo' });
+            }
+            res.json({
+                message: `${insertedLeads.length} leads importados com sucesso`,
+                leads: insertedLeads,
+                total: insertedLeads.length
             });
+        };
+        if (isExcel) {
+            const rows = buildRowsFromXlsx(req.file.buffer);
+            if (!rows.length) {
+                return res.status(400).json({ message: 'Arquivo inválido ou vazio.' });
+            }
+            const headerValidation = validateHeaders(Object.keys(rows[0] || {}));
+            if (!headerValidation.ok) {
+                return res.status(400).json({
+                    message: `Arquivo inválido. Colunas obrigatórias ausentes: ${headerValidation.missing.join(', ')}.`,
+                });
+            }
+            rows.forEach((row) => {
+                leads.push(mapRowToLead(row));
+            });
+            await finalizeImport();
+            return;
+        }
+        stream
+            .pipe((0, csv_parser_1.default)({
+            mapHeaders: ({ header }) => normalizeHeaderKey(header),
+        }))
+            .on('headers', (headers) => {
+            const headerValidation = validateHeaders(headers);
+            if (!headerValidation.ok) {
+                res.status(400).json({
+                    message: `Arquivo inválido. Colunas obrigatórias ausentes: ${headerValidation.missing.join(', ')}.`,
+                });
+                stream.destroy(new Error('invalid_headers'));
+            }
+        })
+            .on('data', (row) => {
+            if (res.headersSent)
+                return;
+            leads.push(mapRowToLead(row));
         })
             .on('end', async () => {
             try {
-                const insertedLeads = [];
-                for (const leadData of leads) {
-                    if (leadData.name && leadData.phone) {
-                        const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, user_id, custom_data, tags)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [leadData.name, leadData.phone, leadData.email, leadData.status, leadData.origin, (req.user && req.user.id), JSON.stringify(leadData.custom_data), JSON.stringify(leadData.tags)]);
-                        const insertedId = (result.rows[0] && result.rows[0].lastInsertRowid) || (result.rows[0] && result.rows[0].id);
-                        const leadResult = await (0, connection_1.query)('SELECT * FROM leads WHERE id = ?', [insertedId]);
-                        const insertedLead = leadResult.rows[0];
-                        // Parse JSON fields from SQLite
-                        if (insertedLead.custom_data && typeof insertedLead.custom_data === 'string') {
-                            try {
-                                insertedLead.custom_data = JSON.parse(insertedLead.custom_data);
-                            }
-                            catch (e) {
-                                insertedLead.custom_data = {};
-                            }
-                        }
-                        if (insertedLead.tags && typeof insertedLead.tags === 'string') {
-                            try {
-                                insertedLead.tags = JSON.parse(insertedLead.tags);
-                            }
-                            catch (e) {
-                                insertedLead.tags = [];
-                            }
-                        }
-                        insertedLeads.push(insertedLead);
-                        // Add to history
-                        await (0, connection_1.query)('INSERT INTO lead_history (lead_id, user_id, action, description) VALUES (?, ?, ?, ?)', [insertedId, (req.user && req.user.id), 'imported', 'Lead importado via CSV']);
-                    }
-                }
-                if (insertedLeads.length === 0) {
-                    return res.status(400).json({ message: 'Nenhum lead válido encontrado no arquivo CSV' });
-                }
-                res.json({
-                    message: `${insertedLeads.length} leads importados com sucesso`,
-                    leads: insertedLeads,
-                    total: insertedLeads.length
-                });
+                if (res.headersSent)
+                    return;
+                await finalizeImport();
             }
             catch (error) {
                 console.error('Import error:', error);
@@ -395,6 +709,8 @@ router.post('/import', auth_1.authenticate, upload.single('file'), async (req, r
             }
         })
             .on('error', (error) => {
+            if (res.headersSent)
+                return;
             console.error('CSV parse error:', error);
             res.status(500).json({ message: 'Erro ao processar arquivo CSV' });
         });
