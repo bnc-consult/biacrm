@@ -37,6 +37,28 @@ const pendingLeadCreates = new Map<string, number>();
 const syncWindowDaysByUser = new Map<string, number>();
 const FINAL_STATUSES = new Set(['finalizado']);
 
+const getPrimaryFunnelId = async (companyId?: number | null) => {
+  if (!companyId) return null;
+  const primaryResult = await query(
+    'SELECT id FROM funnels WHERE company_id = $1 AND is_primary = $2 ORDER BY id LIMIT 1',
+    [companyId, 1]
+  );
+  if (primaryResult.rows && primaryResult.rows[0]) {
+    return Number(primaryResult.rows[0].id);
+  }
+  const firstResult = await query(
+    'SELECT id FROM funnels WHERE company_id = $1 ORDER BY id LIMIT 1',
+    [companyId]
+  );
+  return firstResult.rows && firstResult.rows[0] ? Number(firstResult.rows[0].id) : null;
+};
+const resolveCompanyIdForUser = async (userId?: number | null) => {
+  if (!userId) return null;
+  const result = await query('SELECT company_id FROM users WHERE id = $1', [Number(userId)]);
+  const row = result.rows && result.rows[0];
+  return row?.company_id ? Number(row.company_id) : null;
+};
+
 const normalizePhone = (phone: string) => phone.replace(/\D/g, '');
 const isLikelyPhone = (digits: string) => {
   if (!digits) return false;
@@ -232,10 +254,16 @@ const ensureLeadForIncomingMessage = async (userId: string, phone: string, leadN
 
     let companyId: number | null = null;
     try {
-      const userResult = await query('SELECT company_id FROM users WHERE id = $1', [Number(userId)]);
-      companyId = userResult.rows[0]?.company_id ? Number(userResult.rows[0].company_id) : null;
+      companyId = await resolveCompanyIdForUser(Number(userId));
     } catch (error) {
       companyId = null;
+    }
+    if (!companyId) {
+      console.warn('WhatsApp lead skipped: user without company', {
+        userId: Number(userId),
+        phone: digits
+      });
+      return;
     }
     const isBlocked = await isPhoneBlockedByWhitelist(userId, digits, companyId);
     if (isBlocked) {
@@ -249,9 +277,10 @@ const ensureLeadForIncomingMessage = async (userId: string, phone: string, leadN
       ? leadName.trim()
       : `WhatsApp ${digits}`;
     const storedPhone = formatSendPhone(digits);
+    const primaryFunnelId = await getPrimaryFunnelId(companyId);
     const result = await query(
-      `INSERT INTO leads (name, phone, status, origin, user_id, company_id, custom_data, tags)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO leads (name, phone, status, origin, user_id, company_id, funnel_id, custom_data, tags)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         name,
         storedPhone,
@@ -259,6 +288,7 @@ const ensureLeadForIncomingMessage = async (userId: string, phone: string, leadN
         'whatsapp',
         Number(userId),
         companyId,
+        primaryFunnelId,
         JSON.stringify({}),
         JSON.stringify([])
       ]

@@ -13,7 +13,11 @@ const TRIAL_ADMIN_EMAILS = new Set([
   'bnovais@yahoo,com.br',
   'ifelipes@gmail.com'
 ]);
+const ARCHITECT_EMAILS = new Set(['bnovais@yahoo.com.br', 'ifelipes@gmail.com']);
 const normalizeRole = (role?: string) => (role ? String(role).trim().toLowerCase() : '');
+const normalizeEmail = (email?: string) => String(email || '').trim().toLowerCase();
+const resolveRole = (role?: string) => normalizeRole(role) || role;
+const isArchitectureEmail = (email?: string) => ARCHITECT_EMAILS.has(normalizeEmail(email));
 
 const isTrialExempt = (email?: string, role?: string) => {
   if (role === 'admin') return true;
@@ -171,7 +175,7 @@ const handleRegister = async (req: express.Request, res: express.Response) => {
       expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as any
     };
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: normalizeRole(user.role) || user.role },
+      { id: user.id, email: user.email, role: resolveRole(user.role) },
       jwtSecret,
       signOptions
     );
@@ -181,7 +185,8 @@ const handleRegister = async (req: express.Request, res: express.Response) => {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: normalizeRole(user.role) || user.role,
+        role: resolveRole(user.role),
+        isArchitecture: isArchitectureEmail(user.email),
         companyId: user.company_id
       },
       token
@@ -304,6 +309,10 @@ router.post('/login', async (req, res) => {
 
     const user = result.rows[0];
     console.log('User found:', { id: user.id, email: user.email, hasPassword: !!user.password });
+    const isActive = !(user.is_active === 0 || user.is_active === false);
+    if (!isActive) {
+      return res.status(403).json({ message: 'Usuário inativo. Contate o suporte.' });
+    }
 
     // Check password
     if (!user.password) {
@@ -319,8 +328,8 @@ router.post('/login', async (req, res) => {
 
     const company = await getCompanyById(user.company_id);
     const companyName = company?.name || null;
-    const normalizedRole = normalizeRole(user.role) || user.role;
-    if (normalizedRole !== 'admin') {
+    const resolvedRole = resolveRole(user.role);
+    if (resolvedRole !== 'admin') {
       if (company && !company.plan_active) {
         return res.status(403).json({
           message: 'Sua empresa nao possui plano ativo no BIACRM.',
@@ -329,7 +338,7 @@ router.post('/login', async (req, res) => {
       }
     }
 
-    if (isTrialExpired(user.created_at, user.email, user.role)) {
+    if (isTrialExpired(user.created_at, user.email, resolvedRole)) {
       return res.status(403).json({
         message: 'Seu periodo de trial expirou. Escolha um plano para continuar.',
         code: 'TRIAL_EXPIRED',
@@ -348,7 +357,7 @@ router.post('/login', async (req, res) => {
     };
     
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: normalizedRole },
+      { id: user.id, email: user.email, role: resolvedRole },
       jwtSecret,
       signOptions
     );
@@ -360,7 +369,8 @@ router.post('/login', async (req, res) => {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: normalizedRole,
+        role: resolvedRole,
+        isArchitecture: isArchitectureEmail(user.email),
         companyId: user.company_id,
         companyName
       },
@@ -388,7 +398,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', authenticate, async (req: AuthRequest, res) => {
   try {
     const result = await query(
-      'SELECT u.id, u.name, u.email, u.role, u.created_at, u.company_id, c.name as company_name FROM users u LEFT JOIN companies c ON u.company_id = c.id WHERE u.id = ?',
+      'SELECT u.id, u.name, u.email, u.role, u.created_at, u.company_id, u.is_active, c.name as company_name FROM users u LEFT JOIN companies c ON u.company_id = c.id WHERE u.id = ?',
       [(req.user && req.user.id)]
     );
 
@@ -397,8 +407,12 @@ router.get('/me', authenticate, async (req: AuthRequest, res) => {
     }
 
     const user = result.rows[0];
-    const normalizedRole = normalizeRole(user.role) || user.role;
-    if (isTrialExpired(user.created_at, user.email, normalizedRole)) {
+    const isActive = !(user.is_active === 0 || user.is_active === false);
+    if (!isActive) {
+      return res.status(403).json({ message: 'Usuário inativo. Contate o suporte.' });
+    }
+    const resolvedRole = resolveRole(user.role);
+    if (isTrialExpired(user.created_at, user.email, resolvedRole)) {
       return res.status(403).json({
         message: 'Seu periodo de trial expirou. Escolha um plano para continuar.',
         code: 'TRIAL_EXPIRED',
@@ -407,7 +421,7 @@ router.get('/me', authenticate, async (req: AuthRequest, res) => {
     }
 
     const company = await getCompanyById(user.company_id);
-    if (normalizedRole !== 'admin') {
+    if (resolvedRole !== 'admin') {
       if (company && !company.plan_active) {
         return res.status(403).json({
           message: 'Sua empresa nao possui plano ativo no BIACRM.',
@@ -420,7 +434,8 @@ router.get('/me', authenticate, async (req: AuthRequest, res) => {
       id: user.id,
       name: user.name,
       email: user.email,
-      role: normalizedRole,
+      role: resolvedRole,
+      isArchitecture: isArchitectureEmail(user.email),
       companyId: user.company_id,
       companyName: company?.name || user.company_name || null
     });

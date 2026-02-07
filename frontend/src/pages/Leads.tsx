@@ -40,6 +40,7 @@ interface Lead {
   name: string;
   phone: string;
   email?: string;
+  user_id?: number | null;
   user_name?: string;
   status: string;
   origin: string;
@@ -204,6 +205,7 @@ export default function Leads() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [onlyMyLeads, setOnlyMyLeads] = useState(true);
   const [selectedLeads, setSelectedLeads] = useState<number[]>([]);
   const [sortConfig, setSortConfig] = useState<{ column: string; direction: 'asc' | 'desc' } | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -267,6 +269,7 @@ export default function Leads() {
   const defaultColumns = [
     { id: 'checkbox', label: '', sortable: false, visible: true },
     { id: 'name', label: 'Nome', sortable: true, visible: true },
+    { id: 'responsible', label: 'Responsável pelo lead', sortable: false, visible: true },
     { id: 'phone', label: 'Telefone', sortable: false, visible: true },
     { id: 'product', label: 'Produto', sortable: true, visible: true },
     { id: 'created_at', label: 'Criado em', sortable: false, visible: true },
@@ -829,6 +832,9 @@ export default function Leads() {
   });
 
   const filteredLeads = sortedLeads.filter(lead => {
+    if (onlyMyLeads && user?.id) {
+      if (Number(lead.user_id || 0) !== Number(user.id)) return false;
+    }
     const displayStatus = getDisplayStatus(lead);
     const statusLabel = statusConfig[displayStatus]?.label?.toLowerCase() || displayStatus.toLowerCase();
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -836,6 +842,7 @@ export default function Leads() {
       || lead.name.toLowerCase().includes(normalizedSearch)
       || lead.phone.includes(normalizedSearch)
       || (lead.email && lead.email.toLowerCase().includes(normalizedSearch))
+      || (lead.user_name || '').toLowerCase().includes(normalizedSearch)
       || (lead.funnel_name || '').toLowerCase().includes(normalizedSearch)
       || statusLabel.includes(normalizedSearch)
       || displayStatus.toLowerCase().includes(normalizedSearch);
@@ -1041,15 +1048,26 @@ export default function Leads() {
         </div>
 
         {/* Search Bar */}
-        <div className="relative">
-          <FiSearch className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-          <input
-            type="text"
-            placeholder="Pesquisar..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1">
+            <FiSearch className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+            <input
+              type="text"
+              placeholder="Pesquisar..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-700 whitespace-nowrap border border-gray-200 rounded-lg px-3 py-2 bg-white shadow-sm">
+            <input
+              type="checkbox"
+              checked={onlyMyLeads}
+              onChange={(e) => setOnlyMyLeads(e.target.checked)}
+              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            Somente meus leads
+          </label>
         </div>
       </div>
 
@@ -1163,6 +1181,13 @@ export default function Leads() {
                         return (
                           <td key={column.id} className="px-4 py-3 text-sm text-gray-600">
                             {lead.phone}
+                          </td>
+                        );
+                      }
+                      if (column.id === 'responsible') {
+                        return (
+                          <td key={column.id} className="px-4 py-3 text-sm text-gray-600">
+                            {lead.user_name || '--'}
                           </td>
                         );
                       }

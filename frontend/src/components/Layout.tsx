@@ -24,6 +24,7 @@ import {
   FiVolumeX,
   FiTrash2,
   FiShield,
+  FiLock,
   FiRefreshCw,
   FiX,
   FiInfo,
@@ -33,7 +34,8 @@ import {
   FiPlus,
   FiEdit2,
   FiMessageCircle,
-  FiCpu
+  FiCpu,
+  FiStar
 } from 'react-icons/fi';
 
 interface Notification {
@@ -69,6 +71,26 @@ interface FunnelItem {
   id: number;
   name: string;
   statusOrder?: string[];
+  isPrimary?: boolean;
+}
+
+interface SecurityAdmin {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  companyId?: number | null;
+  companyName?: string | null;
+  isActive: boolean;
+}
+
+interface SecurityCompany {
+  id: number;
+  name: string;
+  email?: string | null;
+  planType?: string | null;
+  planActive: boolean;
+  createdAt?: string | null;
 }
 
 type MenuSubItem = {
@@ -76,6 +98,11 @@ type MenuSubItem = {
   icon: IconType;
   label: string;
   onClick?: () => void;
+  onPrimaryAction?: () => void;
+  primaryActionIcon?: IconType;
+  primaryActionTitle?: string;
+  primaryActionActive?: boolean;
+  primaryActionDisabled?: boolean;
   onAction?: () => void;
   actionIcon?: IconType;
   actionTitle?: string;
@@ -105,6 +132,9 @@ export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const normalizedRole = String(user?.role || '').toLowerCase();
+  const isAdmin = normalizedRole === 'admin';
+  const isGestor = normalizedRole === 'gestor';
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [leadsMenuOpen, setLeadsMenuOpen] = useState(false);
   const [integrationsMenuOpen, setIntegrationsMenuOpen] = useState(false);
@@ -145,6 +175,20 @@ export default function Layout() {
   const [whitelistLoading, setWhitelistLoading] = useState(false);
   const [whitelistFetching, setWhitelistFetching] = useState(false);
   const [whitelistDeletingId, setWhitelistDeletingId] = useState<number | null>(null);
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [securityOpen, setSecurityOpen] = useState(false);
+  const securityCloseTimer = useRef<number | null>(null);
+  const [securityAdmins, setSecurityAdmins] = useState<SecurityAdmin[]>([]);
+  const [securityCompanies, setSecurityCompanies] = useState<SecurityCompany[]>([]);
+  const [securityLoading, setSecurityLoading] = useState(false);
+  const [securityError, setSecurityError] = useState('');
+  const [securityUpdatingId, setSecurityUpdatingId] = useState<number | null>(null);
+  const [securityDeletingId, setSecurityDeletingId] = useState<number | null>(null);
+  const [securityDeletingLeadsId, setSecurityDeletingLeadsId] = useState<number | null>(null);
+  const [securityDeletingCompanyId, setSecurityDeletingCompanyId] = useState<number | null>(null);
+  const [securityDeletingCompanyLeadsId, setSecurityDeletingCompanyLeadsId] = useState<number | null>(null);
+  const [securityTab, setSecurityTab] = useState<'admin' | 'gestor' | 'atendente' | 'companies'>('admin');
+  const [securityCompanyFilter, setSecurityCompanyFilter] = useState<'all' | 'none' | number>('all');
   const [funnels, setFunnels] = useState<FunnelItem[]>([]);
   const [funnelsLoading, setFunnelsLoading] = useState(false);
   const [funnelsError, setFunnelsError] = useState('');
@@ -569,7 +613,12 @@ export default function Layout() {
     setFunnelsLoading(true);
     try {
       const response = await api.get('/funnels');
-      setFunnels(Array.isArray(response.data) ? response.data : []);
+      const list = Array.isArray(response.data) ? response.data : [];
+      const normalized = list.map((item: any) => ({
+        ...item,
+        isPrimary: item?.isPrimary ?? item?.is_primary ?? false
+      }));
+      setFunnels(normalized);
       setFunnelsError('');
     } catch (error: any) {
       const message = error.response?.data?.message || error.message || 'Erro ao carregar funis.';
@@ -600,6 +649,17 @@ export default function Layout() {
     setRenameFunnelName(funnel.name || '');
     setRenameFunnelError('');
     setShowRenameFunnelModal(true);
+  };
+
+  const handleSetPrimaryFunnel = async (funnel: FunnelItem) => {
+    if (!funnel?.id || funnel.isPrimary) return;
+    try {
+      await api.put(`/funnels/${funnel.id}`, { isPrimary: true, is_primary: true });
+      await fetchFunnels();
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao definir funil principal.';
+      setFunnelsError(message);
+    }
   };
 
   const handleRenameFunnel = async () => {
@@ -722,6 +782,145 @@ export default function Layout() {
     }
   };
 
+  const handleOpenSecurity = () => {
+    if (securityCloseTimer.current) {
+      window.clearTimeout(securityCloseTimer.current);
+      securityCloseTimer.current = null;
+    }
+    setSecurityError('');
+    setSecurityTab('admin');
+    setShowSecurityModal(true);
+    requestAnimationFrame(() => setSecurityOpen(true));
+  };
+
+  const handleCloseSecurity = () => {
+    setSecurityOpen(false);
+    securityCloseTimer.current = window.setTimeout(() => {
+      setShowSecurityModal(false);
+      securityCloseTimer.current = null;
+    }, 250);
+  };
+
+  const fetchSecurityAdmins = async () => {
+    setSecurityLoading(true);
+    setSecurityError('');
+    try {
+      const response = await api.get('/security/admins');
+      setSecurityAdmins(Array.isArray(response.data) ? response.data : []);
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao carregar administradores.';
+      setSecurityError(message);
+      setSecurityAdmins([]);
+    } finally {
+      setSecurityLoading(false);
+    }
+  };
+
+  const fetchSecurityCompanies = async () => {
+    setSecurityLoading(true);
+    setSecurityError('');
+    try {
+      const response = await api.get('/security/companies');
+      setSecurityCompanies(Array.isArray(response.data) ? response.data : []);
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao carregar empresas.';
+      setSecurityError(message);
+      setSecurityCompanies([]);
+    } finally {
+      setSecurityLoading(false);
+    }
+  };
+
+  const handleToggleAdminStatus = async (admin: SecurityAdmin) => {
+    setSecurityUpdatingId(admin.id);
+    setSecurityError('');
+    try {
+      await api.patch(`/security/admins/${admin.id}/status`, { isActive: !admin.isActive });
+      await fetchSecurityAdmins();
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao atualizar status.';
+      setSecurityError(message);
+    } finally {
+      setSecurityUpdatingId(null);
+    }
+  };
+
+  const handleRemoveAdminCompany = async (admin: SecurityAdmin) => {
+    if (!window.confirm(`Deseja remover ${admin.name} da empresa?`)) return;
+    setSecurityDeletingId(admin.id);
+    setSecurityError('');
+    try {
+      await api.delete(`/security/admins/${admin.id}/company`);
+      await fetchSecurityAdmins();
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao remover administrador.';
+      setSecurityError(message);
+    } finally {
+      setSecurityDeletingId(null);
+    }
+  };
+
+  const handleDeleteCompanyLeads = async (admin: SecurityAdmin) => {
+    if (!admin.companyId) {
+      setSecurityError('Empresa não vinculada ao administrador.');
+      return;
+    }
+    const companyName = admin.companyName || 'esta empresa';
+    const confirmMessage =
+      `ATENÇÃO! Esta ação excluirá definitivamente todos os leads e informações relacionadas de ${companyName}. ` +
+      'Esta ação não pode ser desfeita. Deseja continuar?';
+    if (!window.confirm(confirmMessage)) return;
+    setSecurityDeletingLeadsId(admin.id);
+    setSecurityError('');
+    try {
+      await api.delete(`/security/admins/${admin.id}/leads`);
+      await fetchSecurityAdmins();
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao excluir leads da empresa.';
+      setSecurityError(message);
+    } finally {
+      setSecurityDeletingLeadsId(null);
+    }
+  };
+
+  const handleDeleteCompany = async (company: SecurityCompany) => {
+    const companyName = company.name || 'esta empresa';
+    const confirmMessage =
+      `ATENÇÃO! Esta ação excluirá definitivamente a empresa ${companyName} e todos os dados relacionados. ` +
+      'Esta ação não pode ser desfeita. Deseja continuar?';
+    if (!window.confirm(confirmMessage)) return;
+    setSecurityDeletingCompanyId(company.id);
+    setSecurityError('');
+    try {
+      await api.delete(`/security/companies/${company.id}`);
+      await fetchSecurityCompanies();
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao excluir empresa.';
+      setSecurityError(message);
+    } finally {
+      setSecurityDeletingCompanyId(null);
+    }
+  };
+
+  const handleDeleteCompanyLeadsFromCompany = async (company: SecurityCompany) => {
+    const companyName = company.name || 'esta empresa';
+    const confirmMessage =
+      `ATENÇÃO! Esta ação excluirá definitivamente todos os leads e informações relacionadas de ${companyName}. ` +
+      'Esta ação não pode ser desfeita. Deseja continuar?';
+    if (!window.confirm(confirmMessage)) return;
+    setSecurityDeletingCompanyLeadsId(company.id);
+    setSecurityError('');
+    try {
+      await api.delete(`/security/companies/${company.id}/leads`);
+      await fetchSecurityCompanies();
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao excluir leads da empresa.';
+      setSecurityError(message);
+    } finally {
+      setSecurityDeletingCompanyLeadsId(null);
+    }
+  };
+
   useEffect(() => {
     if (!showCollaboratorModal) return;
     if (!isCreateMode && collaborators.length > 0) {
@@ -741,6 +940,13 @@ export default function Layout() {
   }, [showWhitelistModal]);
 
   useEffect(() => {
+    if (showSecurityModal) {
+      fetchSecurityAdmins();
+      fetchSecurityCompanies();
+    }
+  }, [showSecurityModal]);
+
+  useEffect(() => {
     if (user) {
       fetchFunnels();
     }
@@ -751,22 +957,27 @@ export default function Layout() {
         path: `/leads/andamento/${funnel.id}`,
         icon: FiBarChart2,
         label: funnel.name || 'Funil',
-        onAction: user?.role === 'admin' ? () => handleOpenRenameFunnel(funnel) : undefined,
-        actionIcon: user?.role === 'admin' ? FiEdit2 : undefined,
-        actionTitle: user?.role === 'admin' ? 'Renomear funil' : undefined,
-        onSecondaryAction: user?.role === 'admin' ? () => handleOpenDeleteFunnel(funnel) : undefined,
-        secondaryActionIcon: user?.role === 'admin' ? FiTrash2 : undefined,
-        secondaryActionTitle: user?.role === 'admin' ? 'Excluir funil' : undefined,
+        onPrimaryAction: isAdmin ? () => handleSetPrimaryFunnel(funnel) : undefined,
+        primaryActionIcon: FiStar,
+        primaryActionTitle: funnel.isPrimary ? 'Funil principal' : 'Definir como funil principal',
+        primaryActionActive: !!funnel.isPrimary,
+        primaryActionDisabled: !isAdmin,
+        onAction: isAdmin ? () => handleOpenRenameFunnel(funnel) : undefined,
+        actionIcon: isAdmin ? FiEdit2 : undefined,
+        actionTitle: isAdmin ? 'Renomear funil' : undefined,
+        onSecondaryAction: isAdmin ? () => handleOpenDeleteFunnel(funnel) : undefined,
+        secondaryActionIcon: isAdmin ? FiTrash2 : undefined,
+        secondaryActionTitle: isAdmin ? 'Excluir funil' : undefined,
       }))
     : [{ path: '/leads/andamento', icon: FiBarChart2, label: 'Funil 1' }];
 
   const leadsSubItems: MenuSubItem[] = [
     { path: '/leads', icon: FiList, label: 'Listagem' },
     ...funnelSubItems,
-    ...(user?.role === 'admin'
+    ...(isAdmin
       ? [{ icon: FiPlus, label: 'Adicionar funil', onClick: handleCreateFunnel }]
       : []),
-    ...(user?.role === 'admin'
+    ...(isAdmin
       ? [{ icon: FiShield, label: 'White List', onClick: handleOpenWhitelist }]
       : []),
   ];
@@ -781,6 +992,7 @@ export default function Layout() {
     collaboratorLimit !== null &&
     collaboratorCount !== null &&
     collaboratorCount >= collaboratorLimit;
+  const isArchitecture = Boolean(user?.isArchitecture);
 
   const menuItems: MenuItem[] = [
     { path: '/', icon: FiHome, label: 'Dashboard' },
@@ -791,13 +1003,21 @@ export default function Layout() {
     { icon: FiZap, label: 'Integrações', hasDropdown: true, subItems: integrationsSubItems },
   ];
 
-  if (user?.role === 'admin' || user?.role === 'gestor') {
+  if (isAdmin || isGestor) {
     const integrationsIndex = menuItems.findIndex(item => item.label === 'Integrações');
     const insertIndex = integrationsIndex >= 0 ? integrationsIndex + 1 : menuItems.length;
     menuItems.splice(insertIndex, 0, {
       icon: FiUserPlus,
       label: 'Colaboradores',
       onClick: handleOpenCollaborators
+    });
+  }
+
+  if (isArchitecture) {
+    menuItems.push({
+      icon: FiLock,
+      label: 'Segurança',
+      onClick: handleOpenSecurity
     });
   }
 
@@ -904,6 +1124,7 @@ export default function Layout() {
                     {item.subItems.map((subItem) => {
                       const SubIcon = subItem.icon;
                       const isSubActive = subItem.path ? location.pathname === subItem.path : false;
+                      const PrimaryActionIcon = subItem.primaryActionIcon;
                       const ActionIcon = subItem.actionIcon;
                       const SecondaryActionIcon = subItem.secondaryActionIcon;
                       
@@ -934,6 +1155,27 @@ export default function Layout() {
                               {subItem.label}
                             </span>
                           </button>
+                          {PrimaryActionIcon && (subItem.onPrimaryAction || subItem.primaryActionDisabled === true) && (
+                            <button
+                              type="button"
+                              onClick={subItem.onPrimaryAction}
+                              disabled={!subItem.onPrimaryAction || subItem.primaryActionDisabled}
+                              className={`p-2 rounded-lg transition-colors ${
+                                subItem.primaryActionActive
+                                  ? 'text-yellow-400'
+                                  : 'text-gray-300'
+                              } ${
+                                subItem.onPrimaryAction && !subItem.primaryActionDisabled
+                                  ? 'hover:text-yellow-500 hover:bg-yellow-50'
+                                  : 'cursor-not-allowed'
+                              }`}
+                              title={subItem.primaryActionActive ? 'Funil principal' : 'Definir como funil principal'}
+                              aria-label={subItem.primaryActionActive ? 'Funil principal' : 'Definir como funil principal'}
+                              aria-pressed={subItem.primaryActionActive}
+                            >
+                              <PrimaryActionIcon className={`w-4 h-4 ${subItem.primaryActionActive ? 'fill-current' : ''}`} />
+                            </button>
+                          )}
                           {subItem.onAction && ActionIcon && (
                             <button
                               type="button"
@@ -1636,6 +1878,247 @@ export default function Layout() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSecurityModal && (
+        <div
+          className="fixed inset-y-0 right-0 z-50"
+          style={{ left: sidebarOpen ? '16rem' : '4rem' }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              handleCloseSecurity();
+            }
+          }}
+        >
+          <div
+            className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${
+              securityOpen ? 'opacity-100' : 'opacity-0'
+            }`}
+          />
+          <div
+            className={`absolute left-0 top-0 h-full w-full max-w-lg bg-white shadow-xl flex flex-col transform transition-transform duration-300 ease-out ${
+              securityOpen ? 'translate-x-0' : '-translate-x-8'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 p-4 border-b border-gray-200">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Segurança</h3>
+                <p className="text-xs text-gray-500">Administradores, empresas e status.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseSecurity}
+                className="text-gray-500 hover:text-gray-700"
+                title="Fechar"
+              >
+                <FiX className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="px-6 pt-4">
+              <div className="flex items-center gap-3 border-b border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => setSecurityTab('admin')}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    securityTab === 'admin'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Administradores
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSecurityTab('gestor')}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    securityTab === 'gestor'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Gestores
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSecurityTab('atendente')}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    securityTab === 'atendente'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Colaboradores
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSecurityTab('companies')}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    securityTab === 'companies'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Empresas
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              {securityError && (
+                <div className="mb-4 text-sm text-red-600">{securityError}</div>
+              )}
+              {securityLoading ? (
+                <div className="text-sm text-gray-500">
+                  {securityTab === 'companies' ? 'Carregando empresas...' : 'Carregando administradores...'}
+                </div>
+              ) : securityTab === 'companies' ? (
+                securityCompanies.length === 0 ? (
+                  <div className="text-sm text-gray-500">Nenhuma empresa encontrada.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {securityCompanies.map((company) => (
+                      <div key={company.id} className="rounded-lg border border-gray-200 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-gray-900 truncate">
+                              {company.name}
+                            </div>
+                            {company.email && (
+                              <div className="text-xs text-gray-500 truncate">{company.email}</div>
+                            )}
+                            <div className="mt-2 text-xs text-gray-600">
+                              Plano: {company.planType || 'Não informado'}
+                            </div>
+                            <div className="mt-1 text-xs">
+                              Status:{' '}
+                              <span className={company.planActive ? 'text-emerald-600' : 'text-red-600'}>
+                                {company.planActive ? 'Ativo' : 'Inativo'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCompany(company)}
+                              disabled={securityDeletingCompanyId === company.id}
+                              className="px-3 py-1 text-xs rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-60"
+                            >
+                              Excluir Empresa
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCompanyLeadsFromCompany(company)}
+                              disabled={securityDeletingCompanyLeadsId === company.id}
+                              className="px-3 py-1 text-xs rounded-md border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-60"
+                            >
+                              Excluir Leads
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : (
+                <>
+                  {(securityTab === 'gestor' || securityTab === 'atendente') && (
+                    <div className="mb-4">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Filtrar por empresa
+                      </label>
+                      <select
+                        value={String(securityCompanyFilter)}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === 'all' || value === 'none') {
+                            setSecurityCompanyFilter(value);
+                          } else {
+                            const numeric = Number(value);
+                            setSecurityCompanyFilter(Number.isNaN(numeric) ? 'all' : numeric);
+                          }
+                        }}
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                      >
+                        <option value="all">Todas as empresas</option>
+                        <option value="none">Sem empresa</option>
+                        {securityCompanies.map((company) => (
+                          <option key={company.id} value={company.id}>
+                            {company.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {securityAdmins
+                    .filter((admin) => admin.role === securityTab)
+                    .filter((admin) => {
+                      if (securityTab !== 'gestor' && securityTab !== 'atendente') return true;
+                      if (securityCompanyFilter === 'all') return true;
+                      if (securityCompanyFilter === 'none') return !admin.companyId;
+                      return Number(admin.companyId) === securityCompanyFilter;
+                    }).length === 0 ? (
+                    <div className="text-sm text-gray-500">Nenhum usuário encontrado.</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {securityAdmins
+                        .filter((admin) => admin.role === securityTab)
+                        .filter((admin) => {
+                          if (securityTab !== 'gestor' && securityTab !== 'atendente') return true;
+                          if (securityCompanyFilter === 'all') return true;
+                          if (securityCompanyFilter === 'none') return !admin.companyId;
+                          return Number(admin.companyId) === securityCompanyFilter;
+                        })
+                        .map((admin) => (
+                      <div key={admin.id} className="rounded-lg border border-gray-200 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-gray-900 truncate">
+                              {admin.name || admin.email}
+                            </div>
+                            <div className="text-xs text-gray-500 truncate">{admin.email}</div>
+                            <div className="mt-2 text-xs text-gray-600">
+                              Empresa: {admin.companyName || 'Sem empresa'}
+                            </div>
+                            <div className="mt-1 text-xs">
+                              Status:{' '}
+                              <span className={admin.isActive ? 'text-emerald-600' : 'text-red-600'}>
+                                {admin.isActive ? 'Ativo' : 'Inativo'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleAdminStatus(admin)}
+                              disabled={securityUpdatingId === admin.id}
+                              className="px-3 py-1 text-xs rounded-md border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                            >
+                              {admin.isActive ? 'Desativar' : 'Ativar'}
+                            </button>
+                            {(securityTab === 'admin' || securityTab === 'gestor') && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveAdminCompany(admin)}
+                                disabled={securityDeletingId === admin.id}
+                                className="px-3 py-1 text-xs rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-60"
+                              >
+                                Excluir da empresa
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>

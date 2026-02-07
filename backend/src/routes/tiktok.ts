@@ -6,6 +6,28 @@ import axios from 'axios';
 
 const router = express.Router();
 
+const getPrimaryFunnelId = async (companyId?: number | null) => {
+  if (!companyId) return null;
+  const primaryResult = await query(
+    'SELECT id FROM funnels WHERE company_id = ? AND is_primary = ? ORDER BY id LIMIT 1',
+    [companyId, 1]
+  );
+  if (primaryResult.rows && primaryResult.rows[0]) {
+    return Number(primaryResult.rows[0].id);
+  }
+  const firstResult = await query(
+    'SELECT id FROM funnels WHERE company_id = ? ORDER BY id LIMIT 1',
+    [companyId]
+  );
+  return firstResult.rows && firstResult.rows[0] ? Number(firstResult.rows[0].id) : null;
+};
+const resolveCompanyIdForUser = async (userId?: number | null) => {
+  if (!userId) return null;
+  const result = await query('SELECT company_id FROM users WHERE id = ?', [userId]);
+  const row = result.rows && result.rows[0];
+  return row?.company_id ? Number(row.company_id) : null;
+};
+
 // TikTok OAuth Configuration
 const TIKTOK_CLIENT_ID = process.env.TIKTOK_CLIENT_ID || '';
 const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || '';
@@ -383,10 +405,18 @@ router.post('/webhook/leads', async (req, res) => {
           [String(advertiserId), 'active']
         );
         ownerId = integrationResult.rows[0]?.user_id ? Number(integrationResult.rows[0].user_id) : null;
-        if (ownerId) {
-          const companyResult = await query('SELECT company_id FROM users WHERE id = ?', [ownerId]);
-          companyId = companyResult.rows[0]?.company_id ? Number(companyResult.rows[0].company_id) : null;
-        }
+        companyId = await resolveCompanyIdForUser(ownerId);
+      }
+      if (!companyId) {
+        console.warn('TikTok lead skipped: integration user without company', {
+          advertiserId,
+          ownerId
+        });
+        return res.json({
+          success: true,
+          message: 'Evento recebido, mas integração sem empresa associada',
+          event_type
+        });
       }
 
       // Process lead data
@@ -408,9 +438,10 @@ router.post('/webhook/leads', async (req, res) => {
       };
 
       // Create lead in database
+      const primaryFunnelId = await getPrimaryFunnelId(companyId);
       const result = await query(
-        `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, funnel_id, custom_data, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [
           leadData.name,
           leadData.phone,
@@ -419,6 +450,7 @@ router.post('/webhook/leads', async (req, res) => {
           leadData.origin,
           ownerId,
           companyId,
+          primaryFunnelId,
           leadData.custom_data
         ]
       );

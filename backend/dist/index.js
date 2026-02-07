@@ -21,6 +21,7 @@ const ai_1 = __importDefault(require("./routes/ai"));
 const appointments_1 = __importDefault(require("./routes/appointments"));
 const company_1 = __importDefault(require("./routes/company"));
 const funnels_1 = __importDefault(require("./routes/funnels"));
+const security_1 = __importDefault(require("./routes/security"));
 dotenv_1.default.config();
 // Initialize database tables on startup
 const initializeDatabase = async () => {
@@ -47,6 +48,7 @@ const initializeDatabase = async () => {
           email TEXT UNIQUE NOT NULL,
           password TEXT NOT NULL,
           role TEXT DEFAULT 'atendente' CHECK (role IN ('admin', 'gestor', 'atendente')),
+          is_active INTEGER DEFAULT 1,
           company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -54,6 +56,12 @@ const initializeDatabase = async () => {
       `);
             try {
                 connection_1.db.exec(`ALTER TABLE users ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL`);
+            }
+            catch (error) {
+                // Column already exists
+            }
+            try {
+                connection_1.db.exec(`ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1`);
             }
             catch (error) {
                 // Column already exists
@@ -252,11 +260,18 @@ const initializeDatabase = async () => {
           company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
           name TEXT NOT NULL,
           status_order TEXT,
+          is_primary INTEGER DEFAULT 0,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_funnels_company ON funnels(company_id)`);
+            try {
+                connection_1.db.exec(`ALTER TABLE funnels ADD COLUMN is_primary INTEGER DEFAULT 0`);
+            }
+            catch (error) {
+                // Column already exists
+            }
             try {
                 connection_1.db.exec(`ALTER TABLE leads ADD COLUMN deleted_at DATETIME`);
             }
@@ -299,10 +314,17 @@ const initializeDatabase = async () => {
           email VARCHAR(255) UNIQUE NOT NULL,
           password VARCHAR(255) NOT NULL,
           role VARCHAR(50) DEFAULT 'atendente' CHECK (role IN ('admin', 'gestor', 'atendente')),
+          is_active BOOLEAN DEFAULT true,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
+            try {
+                await connection_1.pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true`);
+            }
+            catch (error) {
+                // Column already exists
+            }
             await connection_1.pool.query(`
         CREATE TABLE IF NOT EXISTS custom_fields (
           id SERIAL PRIMARY KEY,
@@ -486,11 +508,18 @@ const initializeDatabase = async () => {
           company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
           name VARCHAR(255) NOT NULL,
           status_order JSONB,
+          is_primary BOOLEAN DEFAULT false,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_funnels_company ON funnels(company_id)`);
+            try {
+                await connection_1.pool.query(`ALTER TABLE funnels ADD COLUMN IF NOT EXISTS is_primary BOOLEAN DEFAULT false`);
+            }
+            catch (error) {
+                // Column already exists
+            }
             try {
                 await connection_1.pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);
             }
@@ -614,6 +643,7 @@ app.use('/api/ai', ai_1.default);
 app.use('/api/appointments', appointments_1.default);
 app.use('/api/company', company_1.default);
 app.use('/api/funnels', funnels_1.default);
+app.use('/api/security', security_1.default);
 // Error handler
 app.use((err, req, res, next) => {
     console.error(err.stack);

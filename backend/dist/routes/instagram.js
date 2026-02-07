@@ -9,6 +9,23 @@ const connection_1 = require("../database/connection");
 const auth_1 = require("../middleware/auth");
 const axios_1 = __importDefault(require("axios"));
 const router = express_1.default.Router();
+const getPrimaryFunnelId = async (companyId) => {
+    if (!companyId)
+        return null;
+    const primaryResult = await (0, connection_1.query)('SELECT id FROM funnels WHERE company_id = ? AND is_primary = ? ORDER BY id LIMIT 1', [companyId, 1]);
+    if (primaryResult.rows && primaryResult.rows[0]) {
+        return Number(primaryResult.rows[0].id);
+    }
+    const firstResult = await (0, connection_1.query)('SELECT id FROM funnels WHERE company_id = ? ORDER BY id LIMIT 1', [companyId]);
+    return firstResult.rows && firstResult.rows[0] ? Number(firstResult.rows[0].id) : null;
+};
+const resolveCompanyIdForUser = async (userId) => {
+    if (!userId)
+        return null;
+    const result = await (0, connection_1.query)('SELECT company_id FROM users WHERE id = ?', [userId]);
+    const row = result.rows && result.rows[0];
+    return row?.company_id ? Number(row.company_id) : null;
+};
 // Instagram OAuth Configuration
 // Nota: Instagram Business API usa Facebook OAuth, então podemos usar as mesmas credenciais do Facebook
 const INSTAGRAM_APP_ID = process.env.INSTAGRAM_APP_ID || process.env.FACEBOOK_APP_ID || '';
@@ -629,10 +646,13 @@ router.post('/webhook', async (req, res) => {
                             const integration = await (0, connection_1.query)('SELECT * FROM instagram_integrations WHERE instagram_account_id = ? AND status = ?', [instagramAccountId, 'active']);
                             if (integration.rows.length > 0) {
                                 const ownerId = integration.rows[0]?.user_id ? Number(integration.rows[0].user_id) : null;
-                                let companyId = null;
-                                if (ownerId) {
-                                    const companyResult = await (0, connection_1.query)('SELECT company_id FROM users WHERE id = ?', [ownerId]);
-                                    companyId = companyResult.rows[0]?.company_id ? Number(companyResult.rows[0].company_id) : null;
+                                const companyId = await resolveCompanyIdForUser(ownerId);
+                                if (!companyId) {
+                                    console.warn('Instagram comment lead skipped: integration user without company', {
+                                        instagramAccountId,
+                                        ownerId
+                                    });
+                                    continue;
                                 }
                                 // Process comment as potential lead
                                 const commentText = commentData.text || '';
@@ -663,8 +683,9 @@ router.post('/webhook', async (req, res) => {
                                 }
                                 // Create lead in database if we have contact info
                                 if (leadData.phone || leadData.email || commentText.length > 10) {
-                                    const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, [
+                                    const primaryFunnelId = await getPrimaryFunnelId(companyId);
+                                    const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, funnel_id, custom_data, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, [
                                         leadData.name,
                                         leadData.phone || '',
                                         leadData.email || null,
@@ -672,6 +693,7 @@ router.post('/webhook', async (req, res) => {
                                         leadData.origin,
                                         ownerId,
                                         companyId,
+                                        primaryFunnelId,
                                         leadData.custom_data
                                     ]);
                                     const leadId = (result.rows[0] && result.rows[0].lastInsertRowid) || (result.rows[0] && result.rows[0].id) || 0;
@@ -694,10 +716,13 @@ router.post('/webhook', async (req, res) => {
                             const integration = await (0, connection_1.query)('SELECT * FROM instagram_integrations WHERE instagram_account_id = ? AND status = ?', [instagramAccountId, 'active']);
                             if (integration.rows.length > 0) {
                                 const ownerId = integration.rows[0]?.user_id ? Number(integration.rows[0].user_id) : null;
-                                let companyId = null;
-                                if (ownerId) {
-                                    const companyResult = await (0, connection_1.query)('SELECT company_id FROM users WHERE id = ?', [ownerId]);
-                                    companyId = companyResult.rows[0]?.company_id ? Number(companyResult.rows[0].company_id) : null;
+                                const companyId = await resolveCompanyIdForUser(ownerId);
+                                if (!companyId) {
+                                    console.warn('Instagram mention lead skipped: integration user without company', {
+                                        instagramAccountId,
+                                        ownerId
+                                    });
+                                    continue;
                                 }
                                 const mentionFrom = mentionData.from || {};
                                 const leadData = {
@@ -713,8 +738,9 @@ router.post('/webhook', async (req, res) => {
                                         from: mentionFrom
                                     })
                                 };
-                                const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, [
+                                const primaryFunnelId = await getPrimaryFunnelId(companyId);
+                                const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, funnel_id, custom_data, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, [
                                     leadData.name,
                                     leadData.phone,
                                     leadData.email || null,
@@ -722,6 +748,7 @@ router.post('/webhook', async (req, res) => {
                                     leadData.origin,
                                     ownerId,
                                     companyId,
+                                    primaryFunnelId,
                                     leadData.custom_data
                                 ]);
                                 const leadId = (result.rows[0] && result.rows[0].lastInsertRowid) || (result.rows[0] && result.rows[0].id) || 0;

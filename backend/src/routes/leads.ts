@@ -71,10 +71,32 @@ const getCurrentUserContext = async (userId?: number | null) => {
   }
   const result = await query('SELECT id, role, company_id FROM users WHERE id = ?', [userId]);
   const row = result.rows && result.rows[0];
+  const normalizedRole = String(row?.role || '').toLowerCase();
   return {
-    isAdmin: row?.role === 'admin',
+    isAdmin: normalizedRole === 'admin',
     companyId: row?.company_id ? Number(row.company_id) : null
   };
+};
+const resolveCompanyIdForUser = async (userId?: number | null) => {
+  if (!userId) return null;
+  const result = await query('SELECT company_id FROM users WHERE id = ?', [userId]);
+  const row = result.rows && result.rows[0];
+  return row?.company_id ? Number(row.company_id) : null;
+};
+const getPrimaryFunnelId = async (companyId?: number | null) => {
+  if (!companyId) return null;
+  const primaryResult = await query(
+    'SELECT id FROM funnels WHERE company_id = ? AND is_primary = ? ORDER BY id LIMIT 1',
+    [companyId, 1]
+  );
+  if (primaryResult.rows && primaryResult.rows[0]) {
+    return Number(primaryResult.rows[0].id);
+  }
+  const firstResult = await query(
+    'SELECT id FROM funnels WHERE company_id = ? ORDER BY id LIMIT 1',
+    [companyId]
+  );
+  return firstResult.rows && firstResult.rows[0] ? Number(firstResult.rows[0].id) : null;
 };
 const ensureAdmin = (req: AuthRequest, res: express.Response) => {
   if (!req.user) {
@@ -270,12 +292,12 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
     const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
     const userContext = await getCurrentUserContext(currentUserId);
     isAdmin = userContext.isAdmin;
-    if (!isAdmin && userContext.companyId) {
+    if (userContext.companyId) {
       sql += ' AND (l.company_id = ? OR (l.company_id IS NULL AND l.user_id IN (SELECT id FROM users WHERE company_id = ?)))';
       params.push(userContext.companyId, userContext.companyId);
       const companyUsers = await query('SELECT id FROM users WHERE company_id = ?', [userContext.companyId]);
       companyUserIds = (companyUsers.rows || []).map((row: any) => Number(row.id)).filter(Boolean);
-    } else if (!isAdmin && currentUserId) {
+    } else if (currentUserId) {
       sql += ' AND l.user_id = ?';
       params.push(currentUserId);
     }
@@ -319,7 +341,7 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
     });
 
     let unreadRows: any[] = [];
-    if (isAdmin) {
+    if (isAdmin && !userContext.companyId) {
       const userIds = Array.from(new Set(parsedRows.map((row: any) => Number(row.user_id)).filter(Boolean)));
       if (userIds.length > 0) {
         const placeholders = userIds.map((_, index) => `$${index + 1}`).join(', ');
@@ -611,14 +633,19 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
     const { name, phone, email, status = 'novo_lead', origin = 'manual', custom_data = {}, tags = [], notes } = req.body;
     const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
     const userContext = await getCurrentUserContext(currentUserId);
+    const resolvedCompanyId = userContext.companyId ?? (await resolveCompanyIdForUser(currentUserId));
 
     if (!name || !phone) {
       return res.status(400).json({ message: 'Nome e telefone são obrigatórios' });
     }
+    if (!resolvedCompanyId) {
+      return res.status(400).json({ message: 'Empresa não vinculada ao usuário.' });
+    }
 
+    const primaryFunnelId = await getPrimaryFunnelId(resolvedCompanyId);
     const result = await query(
-      `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, tags, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, funnel_id, custom_data, tags, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         phone,
@@ -626,7 +653,8 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
         status,
         origin,
         currentUserId,
-        userContext.companyId,
+        resolvedCompanyId,
+        primaryFunnelId,
         JSON.stringify(custom_data),
         JSON.stringify(tags),
         notes
@@ -728,8 +756,9 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     };
 
     if (requestedUserId !== null && !Number.isNaN(requestedUserId)) {
-      if (req.user?.role !== 'admin') {
-        return res.status(403).json({ message: 'Apenas administradores podem atribuir responsável' });
+      const normalizedRole = String(req.user?.role || '').toLowerCase();
+      if (normalizedRole !== 'admin' && normalizedRole !== 'gestor') {
+        return res.status(403).json({ message: 'Apenas administradores ou gestores podem atribuir responsável' });
       }
     }
     if (hasFunnelId) {
@@ -927,6 +956,10 @@ router.post('/import', authenticate, upload.single('file'), async (req: AuthRequ
     }
     const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
     const userContext = await getCurrentUserContext(currentUserId);
+    const resolvedCompanyId = userContext.companyId ?? (await resolveCompanyIdForUser(currentUserId));
+    if (!resolvedCompanyId) {
+      return res.status(400).json({ message: 'Empresa não vinculada ao usuário.' });
+    }
 
     const leads: any[] = [];
     const stream = Readable.from(req.file.buffer.toString());
@@ -939,12 +972,13 @@ router.post('/import', authenticate, upload.single('file'), async (req: AuthRequ
         return res.status(400).json({ message: 'Nenhum lead válido encontrado no arquivo' });
       }
       const insertedLeads = [];
+      const primaryFunnelId = await getPrimaryFunnelId(resolvedCompanyId);
 
       for (const leadData of leads) {
         if (leadData.name && leadData.phone) {
           const result = await query(
-            `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, tags)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, funnel_id, custom_data, tags)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               leadData.name,
               leadData.phone,
@@ -952,7 +986,8 @@ router.post('/import', authenticate, upload.single('file'), async (req: AuthRequ
               leadData.status,
               leadData.origin,
               currentUserId,
-              userContext.companyId,
+              resolvedCompanyId,
+              primaryFunnelId,
               JSON.stringify(leadData.custom_data),
               JSON.stringify(leadData.tags)
             ]

@@ -9,6 +9,23 @@ const connection_1 = require("../database/connection");
 const auth_1 = require("../middleware/auth");
 const axios_1 = __importDefault(require("axios"));
 const router = express_1.default.Router();
+const getPrimaryFunnelId = async (companyId) => {
+    if (!companyId)
+        return null;
+    const primaryResult = await (0, connection_1.query)('SELECT id FROM funnels WHERE company_id = ? AND is_primary = ? ORDER BY id LIMIT 1', [companyId, 1]);
+    if (primaryResult.rows && primaryResult.rows[0]) {
+        return Number(primaryResult.rows[0].id);
+    }
+    const firstResult = await (0, connection_1.query)('SELECT id FROM funnels WHERE company_id = ? ORDER BY id LIMIT 1', [companyId]);
+    return firstResult.rows && firstResult.rows[0] ? Number(firstResult.rows[0].id) : null;
+};
+const resolveCompanyIdForUser = async (userId) => {
+    if (!userId)
+        return null;
+    const result = await (0, connection_1.query)('SELECT company_id FROM users WHERE id = ?', [userId]);
+    const row = result.rows && result.rows[0];
+    return row?.company_id ? Number(row.company_id) : null;
+};
 // Facebook OAuth Configuration
 // APP_ID e SECRET fixos no código - configurados pelo desenvolvedor/admin
 // O usuário final não precisa conhecer ou configurar essas credenciais
@@ -997,10 +1014,13 @@ router.post('/webhook/leads', async (req, res) => {
                             if (integration.rows.length > 0) {
                                 const { access_token, user_id } = integration.rows[0];
                                 const ownerId = user_id ? Number(user_id) : null;
-                                let companyId = null;
-                                if (ownerId) {
-                                    const companyResult = await (0, connection_1.query)('SELECT company_id FROM users WHERE id = ?', [ownerId]);
-                                    companyId = companyResult.rows[0]?.company_id ? Number(companyResult.rows[0].company_id) : null;
+                                const companyId = await resolveCompanyIdForUser(ownerId);
+                                if (!companyId) {
+                                    console.warn('Facebook lead skipped: integration user without company', {
+                                        pageId,
+                                        ownerId
+                                    });
+                                    continue;
                                 }
                                 // Fetch lead details from Facebook
                                 try {
@@ -1037,8 +1057,9 @@ router.post('/webhook/leads', async (req, res) => {
                                     });
                                     // Create lead in database
                                     if (leadInfo.name || leadInfo.phone || leadInfo.email) {
-                                        const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, [
+                                        const primaryFunnelId = await getPrimaryFunnelId(companyId);
+                                        const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, funnel_id, custom_data, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, [
                                             leadInfo.name || 'Lead Facebook',
                                             leadInfo.phone || '',
                                             leadInfo.email || null,
@@ -1046,6 +1067,7 @@ router.post('/webhook/leads', async (req, res) => {
                                             'facebook',
                                             ownerId,
                                             companyId,
+                                            primaryFunnelId,
                                             JSON.stringify({
                                                 facebook_leadgen_id: leadgenId,
                                                 facebook_page_id: pageId,

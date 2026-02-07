@@ -16,6 +16,7 @@ import aiRoutes from './routes/ai';
 import appointmentsRoutes from './routes/appointments';
 import companyRoutes from './routes/company';
 import funnelRoutes from './routes/funnels';
+import securityRoutes from './routes/security';
 
 dotenv.config();
 
@@ -46,6 +47,7 @@ const initializeDatabase = async () => {
           email TEXT UNIQUE NOT NULL,
           password TEXT NOT NULL,
           role TEXT DEFAULT 'atendente' CHECK (role IN ('admin', 'gestor', 'atendente')),
+          is_active INTEGER DEFAULT 1,
           company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -53,6 +55,11 @@ const initializeDatabase = async () => {
       `);
       try {
         db.exec(`ALTER TABLE users ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL`);
+      } catch (error) {
+        // Column already exists
+      }
+      try {
+        db.exec(`ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1`);
       } catch (error) {
         // Column already exists
       }
@@ -261,11 +268,17 @@ const initializeDatabase = async () => {
           company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
           name TEXT NOT NULL,
           status_order TEXT,
+          is_primary INTEGER DEFAULT 0,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_funnels_company ON funnels(company_id)`);
+      try {
+        db.exec(`ALTER TABLE funnels ADD COLUMN is_primary INTEGER DEFAULT 0`);
+      } catch (error) {
+        // Column already exists
+      }
       try {
         db.exec(`ALTER TABLE leads ADD COLUMN deleted_at DATETIME`);
       } catch (error) {
@@ -304,10 +317,16 @@ const initializeDatabase = async () => {
           email VARCHAR(255) UNIQUE NOT NULL,
           password VARCHAR(255) NOT NULL,
           role VARCHAR(50) DEFAULT 'atendente' CHECK (role IN ('admin', 'gestor', 'atendente')),
+          is_active BOOLEAN DEFAULT true,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
+      try {
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true`);
+      } catch (error) {
+        // Column already exists
+      }
 
       await pool.query(`
         CREATE TABLE IF NOT EXISTS custom_fields (
@@ -501,11 +520,17 @@ const initializeDatabase = async () => {
           company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
           name VARCHAR(255) NOT NULL,
           status_order JSONB,
+          is_primary BOOLEAN DEFAULT false,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_funnels_company ON funnels(company_id)`);
+      try {
+        await pool.query(`ALTER TABLE funnels ADD COLUMN IF NOT EXISTS is_primary BOOLEAN DEFAULT false`);
+      } catch (error) {
+        // Column already exists
+      }
       try {
         await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);
       } catch (error) {
@@ -635,6 +660,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/appointments', appointmentsRoutes);
 app.use('/api/company', companyRoutes);
 app.use('/api/funnels', funnelRoutes);
+app.use('/api/security', securityRoutes);
 
 // Error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

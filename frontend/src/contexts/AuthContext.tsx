@@ -8,6 +8,7 @@ interface User {
   role: string;
   companyId?: number | null;
   companyName?: string | null;
+  isArchitecture?: boolean;
 }
 
 interface AuthContextType {
@@ -56,6 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const normalizeUser = (data: any): User => ({
     ...data,
     role: typeof data?.role === 'string' ? data.role.toLowerCase().trim() : data?.role,
+    isArchitecture: Boolean(data?.isArchitecture),
     companyName: data?.companyName ?? data?.company_name ?? null
   });
 

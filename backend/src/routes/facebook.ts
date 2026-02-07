@@ -6,6 +6,28 @@ import axios from 'axios';
 
 const router = express.Router();
 
+const getPrimaryFunnelId = async (companyId?: number | null) => {
+  if (!companyId) return null;
+  const primaryResult = await query(
+    'SELECT id FROM funnels WHERE company_id = ? AND is_primary = ? ORDER BY id LIMIT 1',
+    [companyId, 1]
+  );
+  if (primaryResult.rows && primaryResult.rows[0]) {
+    return Number(primaryResult.rows[0].id);
+  }
+  const firstResult = await query(
+    'SELECT id FROM funnels WHERE company_id = ? ORDER BY id LIMIT 1',
+    [companyId]
+  );
+  return firstResult.rows && firstResult.rows[0] ? Number(firstResult.rows[0].id) : null;
+};
+const resolveCompanyIdForUser = async (userId?: number | null) => {
+  if (!userId) return null;
+  const result = await query('SELECT company_id FROM users WHERE id = ?', [userId]);
+  const row = result.rows && result.rows[0];
+  return row?.company_id ? Number(row.company_id) : null;
+};
+
 // Facebook OAuth Configuration
 // APP_ID e SECRET fixos no código - configurados pelo desenvolvedor/admin
 // O usuário final não precisa conhecer ou configurar essas credenciais
@@ -1213,10 +1235,13 @@ router.post('/webhook/leads', async (req, res) => {
               if (integration.rows.length > 0) {
                 const { access_token, user_id } = integration.rows[0];
                 const ownerId = user_id ? Number(user_id) : null;
-                let companyId: number | null = null;
-                if (ownerId) {
-                  const companyResult = await query('SELECT company_id FROM users WHERE id = ?', [ownerId]);
-                  companyId = companyResult.rows[0]?.company_id ? Number(companyResult.rows[0].company_id) : null;
+                const companyId = await resolveCompanyIdForUser(ownerId);
+                if (!companyId) {
+                  console.warn('Facebook lead skipped: integration user without company', {
+                    pageId,
+                    ownerId
+                  });
+                  continue;
                 }
 
                 // Fetch lead details from Facebook
@@ -1259,25 +1284,27 @@ router.post('/webhook/leads', async (req, res) => {
 
                   // Create lead in database
                   if (leadInfo.name || leadInfo.phone || leadInfo.email) {
-                    const result = await query(
-                      `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-                      [
-                        leadInfo.name || 'Lead Facebook',
-                        leadInfo.phone || '',
-                        leadInfo.email || null,
-                        'novo_lead',
-                        'facebook',
-                        ownerId,
-                        companyId,
-                        JSON.stringify({
-                          facebook_leadgen_id: leadgenId,
-                          facebook_page_id: pageId,
-                          created_time: leadData.created_time,
-                          ...leadInfo.custom_data
-                        })
-                      ]
-                    );
+                  const primaryFunnelId = await getPrimaryFunnelId(companyId);
+                  const result = await query(
+                    `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, funnel_id, custom_data, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+                    [
+                      leadInfo.name || 'Lead Facebook',
+                      leadInfo.phone || '',
+                      leadInfo.email || null,
+                      'novo_lead',
+                      'facebook',
+                      ownerId,
+                      companyId,
+                      primaryFunnelId,
+                      JSON.stringify({
+                        facebook_leadgen_id: leadgenId,
+                        facebook_page_id: pageId,
+                        created_time: leadData.created_time,
+                        ...leadInfo.custom_data
+                      })
+                    ]
+                  );
 
                     const leadId = (result.rows[0] && result.rows[0].lastInsertRowid) || (result.rows[0] && result.rows[0].id) || 0;
 

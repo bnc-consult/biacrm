@@ -107,19 +107,19 @@ export default function LandingPage() {
               <h3>Starter</h3>
               <div className="price">R$199 / mes</div>
               <div style={{ color: '#334155' }}>1 numero WhatsApp - 2 usuarios - 2 automacoes simples - 2k msgs</div>
-              <a className="cta" href="https://buy.stripe.com/test_3cI6oGaAR8cRgeG68L3AY00">Contratar</a>
+              <a className="cta" href="https://buy.stripe.com/14A7sK225ezPeOF9y46kg00">Contratar</a>
             </div>
             <div className="card">
               <h3>Pro</h3>
               <div className="price">R$599 / mes</div>
               <div style={{ color: '#334155' }}>1-2 numeros - 5 usuarios - Automacao + IA - 10k msgs</div>
-              <a className="cta" href="https://buy.stripe.com/test_6oU14maAReBf4vYfJl3AY02">Contratar</a>
+              <a className="cta" href="https://buy.stripe.com/aFa00i225ezPgWNcKg6kg01">Contratar</a>
             </div>
             <div className="card">
               <h3>Scale</h3>
               <div className="price">R$1.499 / mes</div>
               <div style={{ color: '#334155' }}>Numeros multiplos - 15 usuarios - Dashboards - SLA</div>
-              <a className="cta" href="https://buy.stripe.com/test_3cI8wO6kB78NgeGbt53AY03">Contratar</a>
+              <a className="cta" href="https://buy.stripe.com/fZu14mgWZ0IZ21TdOk6kg02">Contratar</a>
             </div>
           </div>
         </section>

@@ -29,6 +29,7 @@ interface Lead {
   status: string;
   origin: string;
   created_at: string;
+  user_id?: number | null;
   user_name?: string;
   custom_data?: any;
   unread_count?: number;
@@ -39,6 +40,11 @@ interface FunnelItem {
   id: number;
   name: string;
   statusOrder?: string[];
+}
+
+interface CollaboratorOption {
+  id: number;
+  name: string;
 }
 
 const normalizePhone = (phone?: string) => String(phone || '').replace(/\D/g, '');
@@ -87,12 +93,18 @@ function LeadCard({
   lead,
   avatarUrl,
   isDraggingOver,
-  onRename
+  onRename,
+  canEditOwner,
+  collaborators,
+  onChangeOwner
 }: {
   lead: Lead;
   avatarUrl?: string | null;
   isDraggingOver?: boolean;
   onRename?: (lead: Lead, nextName: string) => Promise<void>;
+  canEditOwner: boolean;
+  collaborators: CollaboratorOption[];
+  onChangeOwner: (lead: Lead, nextOwnerId: number) => Promise<void>;
 }) {
   const navigate = useNavigate();
   const {
@@ -173,6 +185,16 @@ function LeadCard({
       console.error('Erro ao atualizar nome do lead:', error);
     }
   };
+  const collaboratorOptions = (() => {
+    const list = collaborators || [];
+    if (lead.user_id && !list.some((item) => Number(item.id) === Number(lead.user_id))) {
+      return [
+        { id: Number(lead.user_id), name: `${lead.user_name || 'Responsável atual'} (atual)` },
+        ...list
+      ];
+    }
+    return list;
+  })();
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -229,9 +251,35 @@ function LeadCard({
             )}
             <p className="text-xs text-gray-500 mb-1">{formatDate(lead.created_at)}</p>
             <p className="text-xs text-gray-400 line-through opacity-50">Texto oculto</p>
-            {lead.user_name && (
+            {canEditOwner ? (
+              <div className="mt-2">
+                <label className="block text-[11px] text-gray-500 mb-1">Responsável</label>
+                <select
+                  value={lead.user_id ? String(lead.user_id) : ''}
+                  onChange={(e) => {
+                    const nextId = Number(e.target.value);
+                    if (!Number.isNaN(nextId)) {
+                      onChangeOwner(lead, nextId);
+                    }
+                  }}
+                  className="w-full rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {collaboratorOptions.length === 0 ? (
+                    <option value="" disabled>
+                      Sem colaboradores disponíveis
+                    </option>
+                  ) : (
+                    collaboratorOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            ) : lead.user_name ? (
               <p className="text-xs text-gray-600 mt-2 font-medium">{lead.user_name}</p>
-            )}
+            ) : null}
           </div>
         </div>
         <div className="flex flex-col items-center gap-1 flex-shrink-0">
@@ -257,13 +305,19 @@ function StatusColumn({
   leads,
   activeId,
   avatarByPhone,
-  onRename
+  onRename,
+  canEditOwner,
+  collaborators,
+  onChangeOwner
 }: { 
   status: typeof baseStatusColumns[0]; 
   leads: Lead[];
   activeId: string | null;
   avatarByPhone: Record<string, string | null>;
   onRename: (lead: Lead, nextName: string) => Promise<void>;
+  canEditOwner: boolean;
+  collaborators: CollaboratorOption[];
+  onChangeOwner: (lead: Lead, nextOwnerId: number) => Promise<void>;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: status.id,
@@ -304,6 +358,9 @@ function StatusColumn({
                 avatarUrl={avatarUrl}
                 isDraggingOver={activeId === lead.id.toString()}
                 onRename={onRename}
+                canEditOwner={canEditOwner}
+                collaborators={collaborators}
+                onChangeOwner={onChangeOwner}
               />
             );
           })}
@@ -323,6 +380,8 @@ function StatusColumn({
 export default function LeadsAndamento() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const normalizedRole = String(user?.role || '').toLowerCase();
+  const canEditOwner = normalizedRole === 'admin' || normalizedRole === 'gestor';
   const { funnelId } = useParams<{ funnelId?: string }>();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -330,10 +389,12 @@ export default function LeadsAndamento() {
   const [statusColumns, setStatusColumns] = useState(getOrderedStatusColumns());
   const [whatsappAvatars, setWhatsappAvatars] = useState<Record<string, string | null>>({});
   const [funnels, setFunnels] = useState<FunnelItem[]>([]);
+  const [collaborators, setCollaborators] = useState<CollaboratorOption[]>([]);
   const [activeFunnelId, setActiveFunnelId] = useState<number | null>(null);
   const [funnelName, setFunnelName] = useState('Funil 1');
   const [loadingFunnel, setLoadingFunnel] = useState(true);
   const [kanbanFilter, setKanbanFilter] = useState('');
+  const [onlyMyLeads, setOnlyMyLeads] = useState(true);
   const defaultFunnelId = funnels.length > 0 ? Number(funnels[0].id) : null;
   
   const sensors = useSensors(
@@ -373,10 +434,32 @@ export default function LeadsAndamento() {
     }
   };
 
+  const fetchCollaborators = async () => {
+    if (!canEditOwner) {
+      setCollaborators([]);
+      return;
+    }
+    try {
+      const response = await api.get('/company/collaborators');
+      const list = response.data?.collaborators || [];
+      setCollaborators(
+        Array.isArray(list)
+          ? list.map((item: any) => ({
+              id: Number(item.id),
+              name: item.name || item.email || 'Colaborador'
+            }))
+          : []
+      );
+    } catch (error) {
+      setCollaborators([]);
+    }
+  };
+
   useEffect(() => {
     fetchLeads();
     const refreshTimer = setInterval(fetchLeads, 5000);
     fetchFunnels();
+    fetchCollaborators();
     const handleCustomStorageChange = () => {
       fetchFunnels();
     };
@@ -397,6 +480,7 @@ export default function LeadsAndamento() {
 
   useEffect(() => {
     fetchFunnels();
+    fetchCollaborators();
   }, [funnelId]);
 
   useEffect(() => {
@@ -435,6 +519,20 @@ export default function LeadsAndamento() {
       console.error('Error fetching leads:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleChangeLeadOwner = async (lead: Lead, nextOwnerId: number) => {
+    if (!canEditOwner) return;
+    try {
+      const response = await api.put(`/leads/${lead.id}`, { user_id: nextOwnerId });
+      const updated = response.data;
+      setLeads((prev) =>
+        prev.map((item) => (item.id === lead.id ? { ...item, ...updated } : item))
+      );
+      window.dispatchEvent(new CustomEvent('leadUpdated', { detail: { leadId: lead.id } }));
+    } catch (error) {
+      console.error('Erro ao atualizar responsável do lead:', error);
     }
   };
 
@@ -645,6 +743,12 @@ export default function LeadsAndamento() {
       return true;
     });
 
+    if (onlyMyLeads && user?.id) {
+      filteredLeads = filteredLeads.filter(
+        (lead) => Number(lead.user_id || 0) === Number(user.id)
+      );
+    }
+
     const term = kanbanFilter.trim().toLowerCase();
     if (term) {
       filteredLeads = filteredLeads.filter((lead) => {
@@ -653,6 +757,7 @@ export default function LeadsAndamento() {
           lead.name,
           lead.phone,
           lead.email,
+          lead.user_name,
           customData?.cidade,
           customData?.interesse
         ]
@@ -686,15 +791,26 @@ export default function LeadsAndamento() {
       <div className="mb-6 flex items-center justify-between gap-4">
         <div className="flex items-center gap-4 flex-1">
           <h1 className="text-2xl font-bold text-gray-900 whitespace-nowrap">{funnelName}</h1>
-          <div className="relative flex-1">
-            <FiSearch className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-            <input
-              type="text"
-              value={kanbanFilter}
-              onChange={(e) => setKanbanFilter(e.target.value)}
-              placeholder="Pesquisar..."
-              className="w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          <div className="flex items-center gap-3 flex-1">
+            <div className="relative flex-1">
+              <FiSearch className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+              <input
+                type="text"
+                value={kanbanFilter}
+                onChange={(e) => setKanbanFilter(e.target.value)}
+                placeholder="Pesquisar..."
+                className="w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 whitespace-nowrap border border-gray-200 rounded-lg px-3 py-2 bg-white shadow-sm">
+              <input
+                type="checkbox"
+                checked={onlyMyLeads}
+                onChange={(e) => setOnlyMyLeads(e.target.checked)}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              Somente meus leads
+            </label>
           </div>
         </div>
         {user?.role === 'admin' && (
@@ -736,6 +852,9 @@ export default function LeadsAndamento() {
                   activeId={activeId}
                   avatarByPhone={whatsappAvatars}
                   onRename={handleRenameLead}
+                canEditOwner={canEditOwner}
+                collaborators={collaborators}
+                onChangeOwner={handleChangeLeadOwner}
                 />
               </div>
             );
