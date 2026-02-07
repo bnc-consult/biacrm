@@ -20,6 +20,7 @@ const instagram_1 = __importDefault(require("./routes/instagram"));
 const ai_1 = __importDefault(require("./routes/ai"));
 const appointments_1 = __importDefault(require("./routes/appointments"));
 const company_1 = __importDefault(require("./routes/company"));
+const funnels_1 = __importDefault(require("./routes/funnels"));
 dotenv_1.default.config();
 // Initialize database tables on startup
 const initializeDatabase = async () => {
@@ -100,6 +101,12 @@ const initializeDatabase = async () => {
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
+            try {
+                connection_1.db.exec(`ALTER TABLE leads ADD COLUMN funnel_id INTEGER REFERENCES funnels(id) ON DELETE SET NULL`);
+            }
+            catch (error) {
+                // Column already exists
+            }
             connection_1.db.exec(`
         CREATE TABLE IF NOT EXISTS lead_history (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,6 +122,7 @@ const initializeDatabase = async () => {
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)`);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_leads_user_id ON leads(user_id)`);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at)`);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_leads_funnel_id ON leads(funnel_id)`);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_lead_history_lead_id ON lead_history(lead_id)`);
             // TikTok Integrations table
             connection_1.db.exec(`
@@ -223,6 +231,32 @@ const initializeDatabase = async () => {
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_user_id ON scheduled_messages(user_id)`);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_status ON scheduled_messages(status)`);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_scheduled_for ON scheduled_messages(scheduled_for)`);
+            connection_1.db.exec(`
+        CREATE TABLE IF NOT EXISTS lead_whitelist (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          name TEXT,
+          phone TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_lead_whitelist_company ON lead_whitelist(company_id)`);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_lead_whitelist_user ON lead_whitelist(user_id)`);
+            connection_1.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_lead_whitelist_company_phone ON lead_whitelist(company_id, phone)`);
+            connection_1.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_lead_whitelist_user_phone ON lead_whitelist(user_id, phone)`);
+            connection_1.db.exec(`
+        CREATE TABLE IF NOT EXISTS funnels (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          status_order TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_funnels_company ON funnels(company_id)`);
             try {
                 connection_1.db.exec(`ALTER TABLE leads ADD COLUMN deleted_at DATETIME`);
             }
@@ -302,6 +336,12 @@ const initializeDatabase = async () => {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
+            try {
+                await connection_1.pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS funnel_id INTEGER REFERENCES funnels(id) ON DELETE SET NULL`);
+            }
+            catch (error) {
+                // Column already exists or table not created yet
+            }
             await connection_1.pool.query(`
         CREATE TABLE IF NOT EXISTS lead_history (
           id SERIAL PRIMARY KEY,
@@ -317,6 +357,7 @@ const initializeDatabase = async () => {
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)`);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_user_id ON leads(user_id)`);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at)`);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_funnel_id ON leads(funnel_id)`);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_lead_history_lead_id ON lead_history(lead_id)`);
             // TikTok Integrations table
             await connection_1.pool.query(`
@@ -424,6 +465,32 @@ const initializeDatabase = async () => {
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_user_id ON scheduled_messages(user_id)`);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_status ON scheduled_messages(status)`);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_scheduled_messages_scheduled_for ON scheduled_messages(scheduled_for)`);
+            await connection_1.pool.query(`
+        CREATE TABLE IF NOT EXISTS lead_whitelist (
+          id SERIAL PRIMARY KEY,
+          company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          name VARCHAR(255),
+          phone VARCHAR(50) NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_lead_whitelist_company ON lead_whitelist(company_id)`);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_lead_whitelist_user ON lead_whitelist(user_id)`);
+            await connection_1.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_lead_whitelist_company_phone ON lead_whitelist(company_id, phone)`);
+            await connection_1.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_lead_whitelist_user_phone ON lead_whitelist(user_id, phone)`);
+            await connection_1.pool.query(`
+        CREATE TABLE IF NOT EXISTS funnels (
+          id SERIAL PRIMARY KEY,
+          company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+          name VARCHAR(255) NOT NULL,
+          status_order JSONB,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_funnels_company ON funnels(company_id)`);
             try {
                 await connection_1.pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);
             }
@@ -546,6 +613,7 @@ app.use('/api/integrations/instagram', instagram_1.default);
 app.use('/api/ai', ai_1.default);
 app.use('/api/appointments', appointments_1.default);
 app.use('/api/company', company_1.default);
+app.use('/api/funnels', funnels_1.default);
 // Error handler
 app.use((err, req, res, next) => {
     console.error(err.stack);

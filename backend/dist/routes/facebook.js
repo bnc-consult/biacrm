@@ -995,7 +995,13 @@ router.post('/webhook/leads', async (req, res) => {
                             const pageId = entryItem.id;
                             const integration = await (0, connection_1.query)('SELECT * FROM facebook_integrations WHERE page_id = ? AND status = ?', [pageId, 'active']);
                             if (integration.rows.length > 0) {
-                                const { access_token } = integration.rows[0];
+                                const { access_token, user_id } = integration.rows[0];
+                                const ownerId = user_id ? Number(user_id) : null;
+                                let companyId = null;
+                                if (ownerId) {
+                                    const companyResult = await (0, connection_1.query)('SELECT company_id FROM users WHERE id = ?', [ownerId]);
+                                    companyId = companyResult.rows[0]?.company_id ? Number(companyResult.rows[0].company_id) : null;
+                                }
                                 // Fetch lead details from Facebook
                                 try {
                                     const leadResponse = await axios_1.default.get(`${FACEBOOK_API_BASE}/${leadgenId}`, {
@@ -1031,13 +1037,15 @@ router.post('/webhook/leads', async (req, res) => {
                                     });
                                     // Create lead in database
                                     if (leadInfo.name || leadInfo.phone || leadInfo.email) {
-                                        const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, custom_data, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, [
+                                        const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, [
                                             leadInfo.name || 'Lead Facebook',
                                             leadInfo.phone || '',
                                             leadInfo.email || null,
                                             'novo_lead',
                                             'facebook',
+                                            ownerId,
+                                            companyId,
                                             JSON.stringify({
                                                 facebook_leadgen_id: leadgenId,
                                                 facebook_page_id: pageId,

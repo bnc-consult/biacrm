@@ -55,6 +55,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const normalizeUser = (data: any): User => ({
     ...data,
+    role: typeof data?.role === 'string' ? data.role.toLowerCase().trim() : data?.role,
     companyName: data?.companyName ?? data?.company_name ?? null
   });
 

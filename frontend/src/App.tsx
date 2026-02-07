@@ -60,6 +60,7 @@ function AppRoutes() {
           <Route index element={<Dashboard />} />
           <Route path="leads" element={<Leads />} />
           <Route path="leads/andamento" element={<LeadsAndamento />} />
+          <Route path="leads/andamento/:funnelId" element={<LeadsAndamento />} />
           <Route path="leads/:id" element={<LeadDetail />} />
           <Route path="funnel-config" element={<FunnelConfig />} />
           <Route path="entrada-saida" element={<Integrations />} />

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 import {
   DndContext,
@@ -18,7 +19,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { FiPlay, FiChevronUp, FiChevronDown, FiSettings } from 'react-icons/fi';
+import { FiPlay, FiChevronUp, FiChevronDown, FiSettings, FiSearch } from 'react-icons/fi';
 
 interface Lead {
   id: number;
@@ -31,6 +32,13 @@ interface Lead {
   user_name?: string;
   custom_data?: any;
   unread_count?: number;
+  funnel_id?: number | null;
+}
+
+interface FunnelItem {
+  id: number;
+  name: string;
+  statusOrder?: string[];
 }
 
 const normalizePhone = (phone?: string) => String(phone || '').replace(/\D/g, '');
@@ -53,43 +61,39 @@ const baseStatusColumns = [
 ];
 
 // Função para obter colunas ordenadas conforme configuração do funil
-const getOrderedStatusColumns = () => {
-  const savedOrder = localStorage.getItem('funnelStatusOrder');
-  if (savedOrder) {
-    try {
-      const order: string[] = JSON.parse(savedOrder);
-      // Criar um mapa das colunas por ID
-      const columnMap = new Map(baseStatusColumns.map(col => [col.id, col]));
-      
-      // Ordenar conforme a ordem salva, mantendo colunas não configuradas no final
-      const ordered: typeof baseStatusColumns = [];
-      const added = new Set<string>();
-      
-      // Adicionar colunas na ordem salva
-      order.forEach(statusId => {
-        const column = columnMap.get(statusId);
-        if (column) {
-          ordered.push(column);
-          added.add(statusId);
-        }
-      });
-      
-      // Adicionar colunas que não estavam na ordem salva
-      baseStatusColumns.forEach(column => {
-        if (!added.has(column.id)) {
-          ordered.push(column);
-        }
-      });
-      
-      return ordered;
-    } catch (e) {
-      console.error('Error loading saved status order:', e);
-    }
+const getOrderedStatusColumns = (order?: string[]) => {
+  if (!order || order.length === 0) {
+    return baseStatusColumns;
   }
-  return baseStatusColumns;
+  const columnMap = new Map(baseStatusColumns.map(col => [col.id, col]));
+  const ordered: typeof baseStatusColumns = [];
+  const added = new Set<string>();
+  order.forEach(statusId => {
+    const column = columnMap.get(statusId);
+    if (column) {
+      ordered.push(column);
+      added.add(statusId);
+    }
+  });
+  baseStatusColumns.forEach(column => {
+    if (!added.has(column.id)) {
+      ordered.push(column);
+    }
+  });
+  return ordered;
 };
 
-function LeadCard({ lead, avatarUrl, isDraggingOver }: { lead: Lead; avatarUrl?: string | null; isDraggingOver?: boolean }) {
+function LeadCard({
+  lead,
+  avatarUrl,
+  isDraggingOver,
+  onRename
+}: {
+  lead: Lead;
+  avatarUrl?: string | null;
+  isDraggingOver?: boolean;
+  onRename?: (lead: Lead, nextName: string) => Promise<void>;
+}) {
   const navigate = useNavigate();
   const {
     attributes,
@@ -99,13 +103,15 @@ function LeadCard({ lead, avatarUrl, isDraggingOver }: { lead: Lead; avatarUrl?:
     transition,
     isDragging,
   } = useSortable({ id: lead.id.toString() });
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftName, setDraftName] = useState(lead.name || '');
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: isDragging ? 'none' : transition || 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
     opacity: isDragging ? 0.8 : 1,
     zIndex: isDragging ? 1000 : 1,
-    cursor: isDragging ? 'grabbing' : 'grab',
+    cursor: isDragging ? 'grabbing' : isEditing ? 'text' : 'grab',
     pointerEvents: isDragging ? 'none' : 'auto',
   };
   const unreadCount = lead.unread_count ?? 0;
@@ -144,13 +150,48 @@ function LeadCard({ lead, avatarUrl, isDraggingOver }: { lead: Lead; avatarUrl?:
     e.stopPropagation();
     navigate(`/leads/${lead.id}`);
   };
+  const handleStartEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isDragging) return;
+    setDraftName(lead.name || '');
+    setIsEditing(true);
+  };
+  const handleCancelEdit = () => {
+    setDraftName(lead.name || '');
+    setIsEditing(false);
+  };
+  const handleSaveEdit = async () => {
+    const trimmed = draftName.trim();
+    if (!trimmed || trimmed === lead.name) {
+      handleCancelEdit();
+      return;
+    }
+    try {
+      await onRename?.(lead, trimmed);
+      setIsEditing(false);
+    } catch (error) {
+      console.error('Erro ao atualizar nome do lead:', error);
+    }
+  };
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSaveEdit();
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      handleCancelEdit();
+    }
+  };
+  const dragAttributes = isEditing ? {} : attributes;
+  const dragListeners = isEditing ? {} : listeners;
 
   return (
     <div
       ref={setNodeRef}
       style={style}
-      {...attributes}
-      {...listeners}
+      {...dragAttributes}
+      {...dragListeners}
       className={`bg-white rounded-lg shadow-sm p-4 mb-3 cursor-grab active:cursor-grabbing transition-all duration-300 ${
         isDragging 
           ? 'shadow-2xl scale-110 rotate-1 opacity-90' 
@@ -169,7 +210,23 @@ function LeadCard({ lead, avatarUrl, isDraggingOver }: { lead: Lead; avatarUrl?:
             )}
           </div>
           <div className="flex-1">
-            <h3 className="font-semibold text-gray-900 text-sm mb-1">{lead.name}</h3>
+            {isEditing ? (
+              <input
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onBlur={handleSaveEdit}
+                onKeyDown={handleKeyDown}
+                autoFocus
+                className="w-full px-2 py-1 border border-blue-300 rounded text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            ) : (
+              <h3
+                onClick={handleStartEdit}
+                className="font-semibold text-gray-900 text-sm mb-1 cursor-text"
+              >
+                {lead.name}
+              </h3>
+            )}
             <p className="text-xs text-gray-500 mb-1">{formatDate(lead.created_at)}</p>
             <p className="text-xs text-gray-400 line-through opacity-50">Texto oculto</p>
             {lead.user_name && (
@@ -199,12 +256,14 @@ function StatusColumn({
   status, 
   leads,
   activeId,
-  avatarByPhone
+  avatarByPhone,
+  onRename
 }: { 
   status: typeof baseStatusColumns[0]; 
   leads: Lead[];
   activeId: string | null;
   avatarByPhone: Record<string, string | null>;
+  onRename: (lead: Lead, nextName: string) => Promise<void>;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: status.id,
@@ -244,6 +303,7 @@ function StatusColumn({
                 lead={lead} 
                 avatarUrl={avatarUrl}
                 isDraggingOver={activeId === lead.id.toString()}
+                onRename={onRename}
               />
             );
           })}
@@ -262,11 +322,19 @@ function StatusColumn({
 
 export default function LeadsAndamento() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { funnelId } = useParams<{ funnelId?: string }>();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [statusColumns, setStatusColumns] = useState(getOrderedStatusColumns());
   const [whatsappAvatars, setWhatsappAvatars] = useState<Record<string, string | null>>({});
+  const [funnels, setFunnels] = useState<FunnelItem[]>([]);
+  const [activeFunnelId, setActiveFunnelId] = useState<number | null>(null);
+  const [funnelName, setFunnelName] = useState('Funil 1');
+  const [loadingFunnel, setLoadingFunnel] = useState(true);
+  const [kanbanFilter, setKanbanFilter] = useState('');
+  const defaultFunnelId = funnels.length > 0 ? Number(funnels[0].id) : null;
   
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -276,23 +344,41 @@ export default function LeadsAndamento() {
     })
   );
 
+  const fetchFunnels = async () => {
+    setLoadingFunnel(true);
+    try {
+      const response = await api.get('/funnels');
+      const list = Array.isArray(response.data) ? response.data : [];
+      setFunnels(list);
+      const requestedId = funnelId ? Number(funnelId) : null;
+      const active = requestedId
+        ? list.find((item: FunnelItem) => Number(item.id) === requestedId)
+        : list[0];
+      if (active) {
+        setActiveFunnelId(Number(active.id));
+        setFunnelName(active.name || 'Funil');
+        setStatusColumns(getOrderedStatusColumns(active.statusOrder));
+      } else {
+        setActiveFunnelId(null);
+        setFunnelName('Funil 1');
+        setStatusColumns(getOrderedStatusColumns());
+      }
+    } catch (error) {
+      setFunnels([]);
+      setActiveFunnelId(null);
+      setFunnelName('Funil 1');
+      setStatusColumns(getOrderedStatusColumns());
+    } finally {
+      setLoadingFunnel(false);
+    }
+  };
+
   useEffect(() => {
     fetchLeads();
     const refreshTimer = setInterval(fetchLeads, 5000);
-    
-    // Atualizar ordem das colunas quando a configuração mudar
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'funnelStatusOrder') {
-        setStatusColumns(getOrderedStatusColumns());
-      }
-    };
-    
-    // Listener para mudanças em outras abas
-    window.addEventListener('storage', handleStorageChange);
-    
-    // Listener customizado para mudanças na mesma aba
+    fetchFunnels();
     const handleCustomStorageChange = () => {
-      setStatusColumns(getOrderedStatusColumns());
+      fetchFunnels();
     };
     window.addEventListener('funnelOrderChanged', handleCustomStorageChange);
     
@@ -303,12 +389,15 @@ export default function LeadsAndamento() {
     window.addEventListener('leadUpdated', handleLeadUpdated);
     
     return () => {
-      window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('funnelOrderChanged', handleCustomStorageChange);
       window.removeEventListener('leadUpdated', handleLeadUpdated);
       clearInterval(refreshTimer);
     };
   }, []);
+
+  useEffect(() => {
+    fetchFunnels();
+  }, [funnelId]);
 
   useEffect(() => {
     let hasActive = false;
@@ -474,6 +563,14 @@ export default function LeadsAndamento() {
     }
   };
 
+  const handleRenameLead = async (lead: Lead, nextName: string) => {
+    const trimmed = nextName.trim();
+    if (!trimmed || trimmed === lead.name) return;
+    const response = await api.put(`/leads/${lead.id}`, { name: trimmed });
+    setLeads(prev => prev.map(item => (item.id === lead.id ? { ...item, ...response.data } : item)));
+    window.dispatchEvent(new CustomEvent('leadUpdated', { detail: { leadId: lead.id } }));
+  };
+
   // Função auxiliar para encontrar a coluna de um lead
   const getColumnForLead = (lead: Lead) => {
     // Se o lead tem status 'fechamento', verificar o displayStatus no custom_data
@@ -509,6 +606,15 @@ export default function LeadsAndamento() {
     
     // Filtrar leads pelo status do backend e displayStatus se aplicável
     let filteredLeads = leads.filter(lead => {
+      if (activeFunnelId) {
+        if (lead.funnel_id && Number(lead.funnel_id) === Number(activeFunnelId)) {
+          // ok
+        } else if (!lead.funnel_id && defaultFunnelId && Number(activeFunnelId) === Number(defaultFunnelId)) {
+          // leads sem funil vão para o primeiro funil
+        } else {
+          return false;
+        }
+      }
       // Primeiro verificar se o status do backend corresponde
       if (lead.status !== column.backendStatus) {
         return false;
@@ -538,6 +644,23 @@ export default function LeadsAndamento() {
       // Para outras colunas sem displayStatus, apenas verificar o backendStatus
       return true;
     });
+
+    const term = kanbanFilter.trim().toLowerCase();
+    if (term) {
+      filteredLeads = filteredLeads.filter((lead) => {
+        const customData = lead.custom_data || {};
+        const candidates = [
+          lead.name,
+          lead.phone,
+          lead.email,
+          customData?.cidade,
+          customData?.interesse
+        ]
+          .filter(Boolean)
+          .map((value: any) => String(value).toLowerCase());
+        return candidates.some((value: string) => value.includes(term));
+      });
+    }
     
     // Garantir que não há duplicatas (por ID)
     const uniqueLeads = filteredLeads.filter((lead, index, self) =>
@@ -560,15 +683,33 @@ export default function LeadsAndamento() {
 
   return (
     <div className="p-8 bg-gray-50 min-h-full" style={{ overflow: activeId ? 'hidden' : 'visible' }}>
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Andamento</h1>
-        <button
-          onClick={() => navigate('/funnel-config')}
-          className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          <FiSettings className="w-4 h-4" />
-          <span>Configurar funil</span>
-        </button>
+      <div className="mb-6 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4 flex-1">
+          <h1 className="text-2xl font-bold text-gray-900 whitespace-nowrap">{funnelName}</h1>
+          <div className="relative flex-1">
+            <FiSearch className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+            <input
+              type="text"
+              value={kanbanFilter}
+              onChange={(e) => setKanbanFilter(e.target.value)}
+              placeholder="Pesquisar..."
+              className="w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+        {user?.role === 'admin' && (
+          <button
+            onClick={() => {
+              const param = activeFunnelId ? `?funnelId=${activeFunnelId}` : '';
+              navigate(`/funnel-config${param}`);
+            }}
+            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            disabled={loadingFunnel}
+          >
+            <FiSettings className="w-4 h-4" />
+            <span>Configurar funil</span>
+          </button>
+        )}
       </div>
 
       {/* Kanban Board */}
@@ -594,6 +735,7 @@ export default function LeadsAndamento() {
                   leads={columnLeads}
                   activeId={activeId}
                   avatarByPhone={whatsappAvatars}
+                  onRename={handleRenameLead}
                 />
               </div>
             );

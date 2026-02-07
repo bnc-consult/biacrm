@@ -14,6 +14,12 @@ interface Summary {
   finalizados: number;
 }
 
+interface FunnelItem {
+  id: number;
+  name: string;
+  statusOrder?: string[];
+}
+
 const statusLabels: Record<string, string> = {
   novo_lead: 'Sem Atendimento',
   em_contato: 'Em Atendimento',
@@ -21,15 +27,21 @@ const statusLabels: Record<string, string> = {
   visita_concluida: 'Visita Concluída',
   proposta: 'Proposta',
   venda_ganha: 'Venda Ganha',
+  perdido: 'Perdido',
 };
 
 // Ordem correta do funil: Sem Atendimento -> Em Atendimento -> Visita Agendada -> Visita Concluída -> Proposta -> Venda Ganha
-const statusOrder = ['novo_lead', 'em_contato', 'visita_agendada', 'visita_concluida', 'proposta', 'venda_ganha'];
+const DEFAULT_STATUS_ORDER = ['novo_lead', 'em_contato', 'visita_agendada', 'visita_concluida', 'proposta', 'venda_ganha', 'perdido'];
 
 export default function Dashboard() {
   const [funnelData, setFunnelData] = useState<FunnelData[]>([]);
   const [summary, setSummary] = useState<Summary>({ semAtendimento: 0, vendasGanhas: 0, finalizados: 0 });
   const [loading, setLoading] = useState(true);
+  const [funnels, setFunnels] = useState<FunnelItem[]>([]);
+  const [activeFunnelIndex, setActiveFunnelIndex] = useState(0);
+  const [activeStatusOrder, setActiveStatusOrder] = useState<string[]>(DEFAULT_STATUS_ORDER);
+  const [activeFunnelName, setActiveFunnelName] = useState('Funil 1');
+  const [funnelsLoading, setFunnelsLoading] = useState(true);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('dashboard-theme');
     return saved === 'light' ? 'light' : 'dark';
@@ -51,16 +63,30 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchFunnelData();
+    fetchFunnels();
     fetchOriginOptions();
     fetchUserOptions();
     fetchProductOptions();
   }, []);
 
   useEffect(() => {
+    const handleLeadsDeleted = () => {
+      setLoading(true);
+      fetchFunnelData();
+      fetchOriginOptions();
+      fetchProductOptions();
+    };
+    window.addEventListener('leadsDeleted', handleLeadsDeleted);
+    return () => {
+      window.removeEventListener('leadsDeleted', handleLeadsDeleted);
+    };
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem('dashboard-theme', theme);
   }, [theme]);
 
-  const fetchFunnelData = async (nextFilters?: typeof filters) => {
+  const fetchFunnelData = async (nextFilters?: typeof filters, orderOverride?: string[], funnelOverrideId?: number | null, includeUnassignedOverride?: boolean) => {
     const activeFilters = nextFilters ?? filters;
     try {
       const params = new URLSearchParams();
@@ -82,13 +108,21 @@ export default function Dashboard() {
       if (activeFilters.product) {
         params.set('product', activeFilters.product);
       }
+      const targetFunnelId = funnelOverrideId ?? (funnels[activeFunnelIndex]?.id ?? null);
+      if (targetFunnelId) {
+        params.set('funnelId', String(targetFunnelId));
+        const includeUnassigned = includeUnassignedOverride ?? activeFunnelIndex === 0;
+        if (includeUnassigned) {
+          params.set('includeUnassigned', '1');
+        }
+      }
       const query = params.toString();
       const response = await api.get(`/dashboard/funnel${query ? `?${query}` : ''}`);
       const rawData = response.data.funnel;
       setSummary(response.data.summary);
       
       // Calcular percentuais sempre em relação ao total de leads
-      const calculatedData = calculatePercentages(rawData);
+      const calculatedData = calculatePercentages(rawData, orderOverride || activeStatusOrder);
       setFunnelData(calculatedData);
     } catch (error) {
       console.error('Error fetching funnel data:', error);
@@ -97,9 +131,57 @@ export default function Dashboard() {
     }
   };
 
-  const fetchOriginOptions = async () => {
+  const fetchFunnels = async () => {
+    setFunnelsLoading(true);
     try {
-      const response = await api.get('/dashboard/leads-by-origin');
+      const response = await api.get('/funnels');
+      const list = Array.isArray(response.data) ? response.data : [];
+      setFunnels(list);
+      if (list.length > 0) {
+        applyFunnel(0, list);
+      } else {
+        setActiveFunnelIndex(0);
+        setActiveFunnelName('Funil 1');
+        setActiveStatusOrder(DEFAULT_STATUS_ORDER);
+      }
+    } catch (error) {
+      setFunnels([]);
+      setActiveFunnelIndex(0);
+      setActiveFunnelName('Funil 1');
+      setActiveStatusOrder(DEFAULT_STATUS_ORDER);
+    } finally {
+      setFunnelsLoading(false);
+    }
+  };
+
+  const applyFunnel = (index: number, list = funnels) => {
+    if (!list.length) return;
+    const nextIndex = ((index % list.length) + list.length) % list.length;
+    const funnel = list[nextIndex];
+    const order = Array.isArray(funnel.statusOrder) && funnel.statusOrder.length
+      ? funnel.statusOrder
+      : DEFAULT_STATUS_ORDER;
+    setActiveFunnelIndex(nextIndex);
+    setActiveFunnelName(funnel.name || `Funil ${nextIndex + 1}`);
+    setActiveStatusOrder(order);
+    setLoading(true);
+    fetchFunnelData(undefined, order, funnel.id, nextIndex === 0);
+    fetchOriginOptions(funnel.id, nextIndex === 0);
+  };
+
+  const fetchOriginOptions = async (funnelOverrideId?: number | null, includeUnassignedOverride?: boolean) => {
+    try {
+      const params = new URLSearchParams();
+      const targetFunnelId = funnelOverrideId ?? (funnels[activeFunnelIndex]?.id ?? null);
+      if (targetFunnelId) {
+        params.set('funnelId', String(targetFunnelId));
+        const includeUnassigned = includeUnassignedOverride ?? activeFunnelIndex === 0;
+        if (includeUnassigned) {
+          params.set('includeUnassigned', '1');
+        }
+      }
+      const query = params.toString();
+      const response = await api.get(`/dashboard/leads-by-origin${query ? `?${query}` : ''}`);
       const rawItems = Array.isArray(response.data) ? response.data : [];
       const normalized = rawItems
         .map((item: any) => ({
@@ -134,9 +216,9 @@ export default function Dashboard() {
     }
   };
 
-  const calculatePercentages = (data: FunnelData[]): FunnelData[] => {
+  const calculatePercentages = (data: FunnelData[], order = activeStatusOrder): FunnelData[] => {
     // Garantir que os dados estejam na ordem correta
-    const orderedData = statusOrder.map(status => {
+    const orderedData = order.map(status => {
       const item = data.find(item => item.status === status);
       return item ? { ...item, count: item.count || 0 } : { status, count: 0, conversionRate: '0,00' };
     });
@@ -233,7 +315,9 @@ export default function Dashboard() {
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold">Dashboard</h1>
-          <p className={`text-sm ${textSubtle}`}>Visao geral de leads e conversas</p>
+          <p className={`text-sm ${textSubtle}`}>
+            Visao geral de leads e conversas • {activeFunnelName}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -353,7 +437,30 @@ export default function Dashboard() {
                 <h2 className={`text-sm font-semibold ${textTitle}`}>Funil de vendas</h2>
                 <p className={`text-xs ${textMuted}`}>Percentuais sobre o total de leads</p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => applyFunnel(activeFunnelIndex - 1)}
+                    className={`rounded-full border p-1 ${buttonOutline}`}
+                    disabled={funnelsLoading || funnels.length <= 1}
+                    aria-label="Funil anterior"
+                  >
+                    <FiChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span className={`text-xs font-semibold ${textMuted}`}>
+                    {funnelsLoading ? 'Carregando...' : activeFunnelName}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => applyFunnel(activeFunnelIndex + 1)}
+                    className={`rounded-full border p-1 ${buttonOutline}`}
+                    disabled={funnelsLoading || funnels.length <= 1}
+                    aria-label="Próximo funil"
+                  >
+                    <FiChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => setChartViewIndex((prev) => (prev - 1 + chartViews.length) % chartViews.length)}
@@ -375,7 +482,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="mt-4 space-y-3">
-              {activeChartView.id === 'bars' && statusOrder.map((status, index) => {
+              {activeChartView.id === 'bars' && activeStatusOrder.map((status, index) => {
                 const data = funnelData.find((item) => item.status === status);
                 const count = data?.count || 0;
                 let conversionRate = data?.conversionRate || '0,00';
@@ -383,7 +490,7 @@ export default function Dashboard() {
                   conversionRate = conversionRate.replace('.', ',');
                 }
 
-                const maxCount = Math.max(...statusOrder.map((stage) => {
+                const maxCount = Math.max(...activeStatusOrder.map((stage) => {
                   const stageData = funnelData.find((item) => item.status === stage);
                   return stageData?.count || 0;
                 }), 1);
@@ -417,7 +524,7 @@ export default function Dashboard() {
 
               {activeChartView.id === 'funnel' && (
                 <div className="flex flex-col items-center gap-3">
-                  {statusOrder.map((status, index) => {
+                  {activeStatusOrder.map((status, index) => {
                     const data = funnelData.find((item) => item.status === status);
                     const count = data?.count || 0;
                     let conversionRate = data?.conversionRate || '0,00';
@@ -425,7 +532,7 @@ export default function Dashboard() {
                       conversionRate = conversionRate.replace('.', ',');
                     }
 
-                    const maxCount = Math.max(...statusOrder.map((stage) => {
+                    const maxCount = Math.max(...activeStatusOrder.map((stage) => {
                       const stageData = funnelData.find((item) => item.status === stage);
                       return stageData?.count || 0;
                     }), 1);
@@ -494,7 +601,7 @@ export default function Dashboard() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
                 >
                   <option value="">Todos</option>
-                  {statusOrder.map((status) => (
+                  {activeStatusOrder.map((status) => (
                     <option key={status} value={status}>
                       {statusLabels[status]}
                     </option>

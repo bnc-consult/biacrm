@@ -4,23 +4,44 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 
 const router = express.Router();
 
+const getUserContext = async (userId?: number | null) => {
+  if (!userId) {
+    return { isAdmin: false, companyId: null as number | null };
+  }
+  const result = await query('SELECT id, role, company_id FROM users WHERE id = ?', [userId]);
+  const row = result.rows && result.rows[0];
+  return {
+    isAdmin: row?.role === 'admin',
+    companyId: row?.company_id ? Number(row.company_id) : null
+  };
+};
+
 // Get funnel data
 router.get('/funnel', authenticate, async (req: AuthRequest, res) => {
   try {
     let userFilter = '';
     const params: any[] = [];
-    const { startDate, endDate, origin, status: statusFilter, userId, product } = req.query as {
+    const { startDate, endDate, origin, status: statusFilter, userId, product, funnelId, includeUnassigned } = req.query as {
       startDate?: string;
       endDate?: string;
       origin?: string;
       status?: string;
       userId?: string;
       product?: string;
+      funnelId?: string;
+      includeUnassigned?: string;
     };
     
-    if (!req.user || req.user.role !== 'admin') {
-      userFilter = 'AND (user_id = ? OR user_id IS NULL)';
-      params.push((req.user && req.user.id));
+    const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
+    const userContext = await getUserContext(currentUserId);
+    if (!userContext.isAdmin) {
+      if (userContext.companyId) {
+        userFilter = 'AND (company_id = ? OR (company_id IS NULL AND user_id IN (SELECT id FROM users WHERE company_id = ?)))';
+        params.push(userContext.companyId, userContext.companyId);
+      } else if (currentUserId) {
+        userFilter = 'AND user_id = ?';
+        params.push(currentUserId);
+      }
     }
 
     let dateFilter = '';
@@ -44,6 +65,18 @@ router.get('/funnel', authenticate, async (req: AuthRequest, res) => {
         if (!Number.isNaN(parsedUserId)) {
           dateFilter += ' AND user_id = ?';
           params.push(parsedUserId);
+        }
+      }
+    }
+    if (funnelId) {
+      const parsedFunnelId = Number(funnelId);
+      if (!Number.isNaN(parsedFunnelId)) {
+        if (includeUnassigned === '1') {
+          dateFilter += ' AND (funnel_id = ? OR funnel_id IS NULL)';
+          params.push(parsedFunnelId);
+        } else {
+          dateFilter += ' AND funnel_id = ?';
+          params.push(parsedFunnelId);
         }
       }
     }
@@ -199,18 +232,41 @@ router.get('/funnel', authenticate, async (req: AuthRequest, res) => {
 // Get leads by origin
 router.get('/leads-by-origin', authenticate, async (req: AuthRequest, res) => {
   try {
-    let userFilter = '';
     const params: any[] = [];
-    
-    if (!req.user || req.user.role !== 'admin') {
-      userFilter = 'WHERE (user_id = ? OR user_id IS NULL)';
-      params.push((req.user && req.user.id));
+    const { funnelId, includeUnassigned } = req.query as {
+      funnelId?: string;
+      includeUnassigned?: string;
+    };
+    const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
+    const userContext = await getUserContext(currentUserId);
+    const whereParts: string[] = ['deleted_at IS NULL'];
+    if (!userContext.isAdmin) {
+      if (userContext.companyId) {
+        whereParts.push('(company_id = ? OR (company_id IS NULL AND user_id IN (SELECT id FROM users WHERE company_id = ?)))');
+        params.push(userContext.companyId, userContext.companyId);
+      } else if (currentUserId) {
+        whereParts.push('user_id = ?');
+        params.push(currentUserId);
+      }
+    }
+
+    if (funnelId) {
+      const parsedFunnelId = Number(funnelId);
+      if (!Number.isNaN(parsedFunnelId)) {
+        if (includeUnassigned === '1') {
+          whereParts.push('(funnel_id = ? OR funnel_id IS NULL)');
+          params.push(parsedFunnelId);
+        } else {
+          whereParts.push('funnel_id = ?');
+          params.push(parsedFunnelId);
+        }
+      }
     }
 
     const sql = `
       SELECT origin, COUNT(*) as count
       FROM leads
-      ${userFilter}
+      WHERE ${whereParts.join(' AND ')}
       GROUP BY origin
       ORDER BY count DESC
     `;
@@ -229,9 +285,16 @@ router.get('/products', authenticate, async (req: AuthRequest, res) => {
     let userFilter = '';
     const params: any[] = [];
 
-    if (!req.user || req.user.role !== 'admin') {
-      userFilter = 'AND (user_id = ? OR user_id IS NULL)';
-      params.push((req.user && req.user.id));
+    const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
+    const userContext = await getUserContext(currentUserId);
+    if (!userContext.isAdmin) {
+      if (userContext.companyId) {
+        userFilter = 'AND (company_id = ? OR (company_id IS NULL AND user_id IN (SELECT id FROM users WHERE company_id = ?)))';
+        params.push(userContext.companyId, userContext.companyId);
+      } else if (currentUserId) {
+        userFilter = 'AND user_id = ?';
+        params.push(currentUserId);
+      }
     }
 
     const sql = `SELECT custom_data FROM leads WHERE deleted_at IS NULL ${userFilter}`;
@@ -267,13 +330,18 @@ router.get('/users', authenticate, async (req: AuthRequest, res) => {
       return res.status(401).json({ message: 'Não autenticado' });
     }
 
-    if (req.user.role !== 'admin') {
-      const result = await query('SELECT id, name FROM users WHERE id = ?', [req.user.id]);
+    const currentUserId = Number(req.user.id);
+    const userContext = await getUserContext(currentUserId);
+    if (userContext.companyId) {
+      const result = await query('SELECT id, name FROM users WHERE company_id = ? ORDER BY name', [userContext.companyId]);
       return res.json(result.rows);
     }
-
-    const result = await query('SELECT id, name FROM users ORDER BY name');
-    res.json(result.rows);
+    if (userContext.isAdmin) {
+      const result = await query('SELECT id, name FROM users ORDER BY name');
+      return res.json(result.rows);
+    }
+    const result = await query('SELECT id, name FROM users WHERE id = ?', [currentUserId]);
+    return res.json(result.rows);
   } catch (error: any) {
     console.error('Get users error:', error);
     res.status(500).json({ message: error.message });
@@ -287,9 +355,16 @@ router.get('/leads-by-date', authenticate, async (req: AuthRequest, res) => {
     let userFilter = '';
     const params: any[] = [];
     
-    if (!req.user || req.user.role !== 'admin') {
-      userFilter = 'AND (user_id = ? OR user_id IS NULL)';
-      params.push((req.user && req.user.id));
+    const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
+    const userContext = await getUserContext(currentUserId);
+    if (!userContext.isAdmin) {
+      if (userContext.companyId) {
+        userFilter = 'AND (company_id = ? OR (company_id IS NULL AND user_id IN (SELECT id FROM users WHERE company_id = ?)))';
+        params.push(userContext.companyId, userContext.companyId);
+      } else if (currentUserId) {
+        userFilter = 'AND user_id = ?';
+        params.push(currentUserId);
+      }
     }
 
     const sql = `
@@ -297,7 +372,8 @@ router.get('/leads-by-date', authenticate, async (req: AuthRequest, res) => {
         DATE(created_at) as date,
         COUNT(*) as count
       FROM leads
-      WHERE created_at >= datetime('now', '-${days} days')
+      WHERE deleted_at IS NULL
+        AND created_at >= datetime('now', '-${days} days')
       ${userFilter}
       GROUP BY DATE(created_at)
       ORDER BY date ASC

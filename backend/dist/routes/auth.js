@@ -17,6 +17,7 @@ const TRIAL_ADMIN_EMAILS = new Set([
     'bnovais@yahoo,com.br',
     'ifelipes@gmail.com'
 ]);
+const normalizeRole = (role) => (role ? String(role).trim().toLowerCase() : '');
 const isTrialExempt = (email, role) => {
     if (role === 'admin')
         return true;
@@ -144,13 +145,13 @@ const handleRegister = async (req, res) => {
         const signOptions = {
             expiresIn: (process.env.JWT_EXPIRES_IN || '7d')
         };
-        const token = jsonwebtoken_1.default.sign({ id: user.id, email: user.email, role: user.role }, jwtSecret, signOptions);
+        const token = jsonwebtoken_1.default.sign({ id: user.id, email: user.email, role: normalizeRole(user.role) || user.role }, jwtSecret, signOptions);
         res.status(201).json({
             user: {
                 id: user.id,
                 name: user.name,
                 email: user.email,
-                role: user.role,
+                role: normalizeRole(user.role) || user.role,
                 companyId: user.company_id
             },
             token
@@ -270,7 +271,8 @@ router.post('/login', async (req, res) => {
         }
         const company = await getCompanyById(user.company_id);
         const companyName = company?.name || null;
-        if (user.role !== 'admin') {
+        const normalizedRole = normalizeRole(user.role) || user.role;
+        if (normalizedRole !== 'admin') {
             if (company && !company.plan_active) {
                 return res.status(403).json({
                     message: 'Sua empresa nao possui plano ativo no BIACRM.',
@@ -293,14 +295,14 @@ router.post('/login', async (req, res) => {
         const signOptions = {
             expiresIn: (process.env.JWT_EXPIRES_IN || '7d')
         };
-        const token = jsonwebtoken_1.default.sign({ id: user.id, email: user.email, role: user.role }, jwtSecret, signOptions);
+        const token = jsonwebtoken_1.default.sign({ id: user.id, email: user.email, role: normalizedRole }, jwtSecret, signOptions);
         console.log('Login successful for user:', email);
         res.json({
             user: {
                 id: user.id,
                 name: user.name,
                 email: user.email,
-                role: user.role,
+                role: normalizedRole,
                 companyId: user.company_id,
                 companyName
             },
@@ -331,7 +333,8 @@ router.get('/me', auth_1.authenticate, async (req, res) => {
             return res.status(404).json({ message: 'Usuário não encontrado' });
         }
         const user = result.rows[0];
-        if (isTrialExpired(user.created_at, user.email, user.role)) {
+        const normalizedRole = normalizeRole(user.role) || user.role;
+        if (isTrialExpired(user.created_at, user.email, normalizedRole)) {
             return res.status(403).json({
                 message: 'Seu periodo de trial expirou. Escolha um plano para continuar.',
                 code: 'TRIAL_EXPIRED',
@@ -339,7 +342,7 @@ router.get('/me', auth_1.authenticate, async (req, res) => {
             });
         }
         const company = await getCompanyById(user.company_id);
-        if (user.role !== 'admin') {
+        if (normalizedRole !== 'admin') {
             if (company && !company.plan_active) {
                 return res.status(403).json({
                     message: 'Sua empresa nao possui plano ativo no BIACRM.',
@@ -351,7 +354,7 @@ router.get('/me', auth_1.authenticate, async (req, res) => {
             id: user.id,
             name: user.name,
             email: user.email,
-            role: user.role,
+            role: normalizedRole,
             companyId: user.company_id,
             companyName: company?.name || user.company_name || null
         });

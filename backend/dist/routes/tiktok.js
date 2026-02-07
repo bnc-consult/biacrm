@@ -282,6 +282,17 @@ router.post('/webhook/leads', async (req, res) => {
         // For now, we'll process the webhook
         const { event_type, data } = req.body;
         if (event_type === 'LEAD') {
+            const advertiserId = (data && (data.advertiser_id || data.advertiserId)) || null;
+            let ownerId = null;
+            let companyId = null;
+            if (advertiserId) {
+                const integrationResult = await (0, connection_1.query)('SELECT user_id FROM tiktok_integrations WHERE advertiser_id = ? AND status = ?', [String(advertiserId), 'active']);
+                ownerId = integrationResult.rows[0]?.user_id ? Number(integrationResult.rows[0].user_id) : null;
+                if (ownerId) {
+                    const companyResult = await (0, connection_1.query)('SELECT company_id FROM users WHERE id = ?', [ownerId]);
+                    companyId = companyResult.rows[0]?.company_id ? Number(companyResult.rows[0].company_id) : null;
+                }
+            }
             // Process lead data
             const leadData = {
                 name: (data && data.contact_name) || (data && data.name) || '',
@@ -295,17 +306,20 @@ router.post('/webhook/leads', async (req, res) => {
                     tiktok_campaign_id: (data && data.campaign_id),
                     tiktok_form_id: (data && data.form_id),
                     tiktok_lead_id: (data && data.lead_id),
+                    tiktok_advertiser_id: advertiserId,
                     ...data
                 })
             };
             // Create lead in database
-            const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, custom_data, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, [
+            const result = await (0, connection_1.query)(`INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, [
                 leadData.name,
                 leadData.phone,
                 leadData.email || null,
                 leadData.status,
                 leadData.origin,
+                ownerId,
+                companyId,
                 leadData.custom_data
             ]);
             const leadId = (result.rows[0] && result.rows[0].lastInsertRowid) || (result.rows[0] && result.rows[0].id) || 0;

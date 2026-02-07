@@ -64,6 +64,29 @@ const getField = (row: Record<string, any>, keys: string[]) => {
   }
   return '';
 };
+
+const getCurrentUserContext = async (userId?: number | null) => {
+  if (!userId) {
+    return { isAdmin: false, companyId: null as number | null };
+  }
+  const result = await query('SELECT id, role, company_id FROM users WHERE id = ?', [userId]);
+  const row = result.rows && result.rows[0];
+  return {
+    isAdmin: row?.role === 'admin',
+    companyId: row?.company_id ? Number(row.company_id) : null
+  };
+};
+const ensureAdmin = (req: AuthRequest, res: express.Response) => {
+  if (!req.user) {
+    res.status(401).json({ message: 'Não autenticado' });
+    return false;
+  }
+  if (req.user.role !== 'admin') {
+    res.status(403).json({ message: 'Acesso permitido apenas para administradores.' });
+    return false;
+  }
+  return true;
+};
 const parseTags = (value: any) => {
   if (!value) return [];
   if (Array.isArray(value)) return value;
@@ -73,12 +96,12 @@ const parseTags = (value: any) => {
     .filter(Boolean);
 };
 const NAME_KEYS = [
+  'contato principal',
   'nome completo',
-  'lead título',
   'nome',
   'pessoa de contato',
   'contato da empresa',
-  'contato principal',
+  'lead título',
   "empresa lead 's",
   'empresa do contato',
 ];
@@ -121,35 +144,74 @@ const validateHeaders = (headers: string[]) => {
   return { ok: missing.length === 0, missing };
 };
 
-const mapRowToLead = (row: Record<string, any>) => {
-  const name = getField(row, [
+const mapRowToLead = (row: Record<string, any> | any[]) => {
+  const rowObject: Record<string, any> = Array.isArray(row) ? {} : row;
+  const rowArray = Array.isArray(row) ? row : null;
+  const readArrayValue = (index: number) =>
+    rowArray && rowArray[index] !== undefined && rowArray[index] !== null
+      ? String(rowArray[index]).trim()
+      : '';
+  const findPhoneFromArray = () => {
+    if (!rowArray) return '';
+    for (const value of rowArray) {
+      const digits = String(value || '').replace(/\D/g, '');
+      if (digits.length >= 10) {
+        return String(value).trim();
+      }
+    }
+    return '';
+  };
+  const findEmailFromArray = () => {
+    if (!rowArray) return '';
+    const found = rowArray.find((value) => String(value || '').includes('@'));
+    return found ? String(found).trim() : '';
+  };
+
+  let name = getField(rowObject, [
     ...NAME_KEYS,
   ]);
-  const phone = getField(row, [
+  if (rowArray) {
+    name = readArrayValue(2) || readArrayValue(3) || name;
+  }
+  let phone = getField(rowObject, [
     ...PHONE_KEYS,
   ]);
-  const email = getField(row, [
+  if (rowArray) {
+    phone = readArrayValue(4) || phone || findPhoneFromArray();
+  }
+  let email = getField(rowObject, [
     ...EMAIL_KEYS,
   ]);
-  const origin = getField(row, [
+  if (rowArray) {
+    email = readArrayValue(5) || email || findEmailFromArray();
+  }
+  const origin = getField(rowObject, [
     ...ORIGIN_KEYS,
   ]) || 'manual';
-  const tags = parseTags(getField(row, TAGS_KEYS));
+  const tags = parseTags(getField(rowObject, TAGS_KEYS));
   const custom_data = {
-    ...(row['etapa do lead'] ? { lead_stage: row['etapa do lead'] } : {}),
-    ...(row['funil de vendas'] ? { funnel: row['funil de vendas'] } : {}),
-    ...(row['lead usuário responsável'] ? { lead_owner: row['lead usuário responsável'] } : {}),
-    ...(row['empresa do contato'] ? { contact_company: row['empresa do contato'] } : {}),
-    ...(row["empresa lead 's"] ? { lead_company: row["empresa lead 's"] } : {}),
-    ...(row['próxima tarefa'] ? { next_task: row['próxima tarefa'] } : {}),
-    ...(row['fechada em'] ? { closed_at: row['fechada em'] } : {}),
-    ...(row['obs'] ? { notes: row['obs'] } : {}),
-    ...(row['etapa'] ? { stage: row['etapa'] } : {}),
-    ...(row['local_interesse'] ? { local_interesse: row['local_interesse'] } : {}),
-    ...(row['local_intersse'] ? { local_intersse: row['local_intersse'] } : {}),
-    ...(row['tipo_imovel'] ? { tipo_imovel: row['tipo_imovel'] } : {}),
-    ...(row['interesse'] ? { interesse: row['interesse'] } : {}),
-    ...(row['posição (contato)'] ? { contact_position: row['posição (contato)'] } : {}),
+    ...(rowObject['etapa do lead'] ? { lead_stage: rowObject['etapa do lead'] } : {}),
+    ...(rowObject['funil de vendas'] ? { funnel: rowObject['funil de vendas'] } : {}),
+    ...(rowObject['lead usuário responsável'] ? { lead_owner: rowObject['lead usuário responsável'] } : {}),
+    ...(rowObject['usuário responsável'] ? { lead_owner: rowObject['usuário responsável'] } : {}),
+    ...(rowObject['usuario responsavel'] ? { lead_owner: rowObject['usuario responsavel'] } : {}),
+    ...(rowObject['empresa do contato'] ? { contact_company: rowObject['empresa do contato'] } : {}),
+    ...(rowObject["empresa lead 's"] ? { lead_company: rowObject["empresa lead 's"] } : {}),
+    ...(rowObject['cidade'] ? { cidade: rowObject['cidade'] } : {}),
+    ...(rowObject['interesse'] ? { interesse: rowObject['interesse'] } : {}),
+    ...(rowObject['tipo de negócio'] ? { interesse: rowObject['tipo de negócio'] } : {}),
+    ...(rowObject['tipo de negocio'] ? { interesse: rowObject['tipo de negocio'] } : {}),
+    ...(rowObject['tipo de negócio:'] ? { interesse: rowObject['tipo de negócio:'] } : {}),
+    ...(rowObject['tipo de negocio:'] ? { interesse: rowObject['tipo de negocio:'] } : {}),
+    ...(rowObject['próxima tarefa'] ? { next_task: rowObject['próxima tarefa'] } : {}),
+    ...(rowObject['fechada em'] ? { closed_at: rowObject['fechada em'] } : {}),
+    ...(rowObject['obs'] ? { notes: rowObject['obs'] } : {}),
+    ...(rowObject['etapa'] ? { stage: rowObject['etapa'] } : {}),
+    ...(rowObject['local_interesse'] ? { local_interesse: rowObject['local_interesse'] } : {}),
+    ...(rowObject['local_intersse'] ? { local_intersse: rowObject['local_intersse'] } : {}),
+    ...(rowObject['tipo_imovel'] ? { tipo_imovel: rowObject['tipo_imovel'] } : {}),
+    ...(rowObject['interesse'] ? { interesse: rowObject['interesse'] } : {}),
+    ...(rowObject['posição (contato)'] ? { contact_position: rowObject['posição (contato)'] } : {}),
     raw_import: row,
   };
 
@@ -171,6 +233,16 @@ const buildRowsFromXlsx = (buffer: Buffer) => {
   const rows = xlsx.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: '' });
   if (!rows.length) return [];
   const headers = (rows[0] || []).map((header: any) => normalizeHeaderKey(String(header)));
+  const headerValidation = validateHeaders(headers);
+  if (!headerValidation.ok) {
+    return rows.reduce<any[]>((acc, row) => {
+      if (!row || row.every((cell: any) => String(cell || '').trim() === '')) {
+        return acc;
+      }
+      acc.push(row);
+      return acc;
+    }, []);
+  }
   return rows.slice(1).reduce<Record<string, any>[]>((acc, row) => {
     if (!row || row.every((cell: any) => String(cell || '').trim() === '')) {
       return acc;
@@ -190,20 +262,22 @@ const buildRowsFromXlsx = (buffer: Buffer) => {
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   try {
     const { status, search, origin } = req.query;
-    let sql = 'SELECT l.*, u.name as user_name FROM leads l LEFT JOIN users u ON l.user_id = u.id WHERE l.deleted_at IS NULL';
+    let sql = 'SELECT l.*, u.name as user_name, f.name as funnel_name FROM leads l LEFT JOIN users u ON l.user_id = u.id LEFT JOIN funnels f ON l.funnel_id = f.id WHERE l.deleted_at IS NULL';
     const params: any[] = [];
     let isAdmin = false;
     let companyUserIds: number[] = [];
 
     const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
-    if (currentUserId) {
-      const userResult = await query('SELECT id, role, company_id FROM users WHERE id = ?', [currentUserId]);
-      const currentUser = userResult.rows && userResult.rows[0];
-      isAdmin = currentUser?.role === 'admin';
-      if (!isAdmin && currentUser?.company_id) {
-        const companyUsers = await query('SELECT id FROM users WHERE company_id = ?', [currentUser.company_id]);
-        companyUserIds = (companyUsers.rows || []).map((row: any) => Number(row.id)).filter(Boolean);
-      }
+    const userContext = await getCurrentUserContext(currentUserId);
+    isAdmin = userContext.isAdmin;
+    if (!isAdmin && userContext.companyId) {
+      sql += ' AND (l.company_id = ? OR (l.company_id IS NULL AND l.user_id IN (SELECT id FROM users WHERE company_id = ?)))';
+      params.push(userContext.companyId, userContext.companyId);
+      const companyUsers = await query('SELECT id FROM users WHERE company_id = ?', [userContext.companyId]);
+      companyUserIds = (companyUsers.rows || []).map((row: any) => Number(row.id)).filter(Boolean);
+    } else if (!isAdmin && currentUserId) {
+      sql += ' AND l.user_id = ?';
+      params.push(currentUserId);
     }
 
     if (status) {
@@ -220,18 +294,6 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       sql += ' AND (l.name LIKE ? OR l.phone LIKE ? OR l.email LIKE ?)';
       const searchTerm = `%${search}%`;
       params.push(searchTerm, searchTerm, searchTerm);
-    }
-
-    // If user is not admin, filter by company users (or own leads if no company)
-    if (!isAdmin) {
-      if (companyUserIds.length > 0) {
-        const placeholders = companyUserIds.map(() => '?').join(', ');
-        sql += ` AND l.user_id IN (${placeholders})`;
-        params.push(...companyUserIds);
-      } else if (currentUserId) {
-        sql += ' AND l.user_id = ?';
-        params.push(currentUserId);
-      }
     }
 
     sql += ' ORDER BY l.created_at DESC';
@@ -324,25 +386,152 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
+// White list (números que não devem gerar leads)
+router.get('/whitelist', authenticate, async (req: AuthRequest, res) => {
+  try {
+    if (!ensureAdmin(req, res)) return;
+    const currentUserId = Number(req.user?.id);
+    const userContext = await getCurrentUserContext(currentUserId);
+    if (!userContext.companyId) {
+      return res.status(400).json({ message: 'Empresa não vinculada ao usuário.' });
+    }
+    const result = await query(
+      'SELECT id, name, phone FROM lead_whitelist WHERE company_id = $1 ORDER BY created_at DESC',
+      [userContext.companyId]
+    );
+    return res.json(result.rows || []);
+  } catch (error: any) {
+    console.error('Get whitelist error:', error);
+    res.status(500).json({ message: error.message || 'Erro ao carregar white list.' });
+  }
+});
+
+router.post('/whitelist', authenticate, async (req: AuthRequest, res) => {
+  try {
+    if (!ensureAdmin(req, res)) return;
+    const currentUserId = Number(req.user?.id);
+    const userContext = await getCurrentUserContext(currentUserId);
+    if (!userContext.companyId) {
+      return res.status(400).json({ message: 'Empresa não vinculada ao usuário.' });
+    }
+    const phone = normalizePhone(req.body?.phone || '');
+    const name = String(req.body?.name || '').trim();
+    if (!phone) {
+      return res.status(400).json({ message: 'Informe um número de celular válido.' });
+    }
+    const existing = await query(
+      'SELECT id, phone FROM lead_whitelist WHERE company_id = $1',
+      [userContext.companyId]
+    );
+    const list = existing.rows || [];
+    const alreadyExists = list.some((row: any) => isSameLead(row.phone || '', phone));
+    if (alreadyExists) {
+      return res.status(409).json({ message: 'Número já cadastrado na white list.' });
+    }
+    const result = await query(
+      'INSERT INTO lead_whitelist (company_id, user_id, name, phone) VALUES ($1, $2, $3, $4)',
+      [userContext.companyId, currentUserId, name || null, phone]
+    );
+    const insertedId = result.rows?.[0]?.lastInsertRowid || result.rows?.[0]?.id;
+    res.json({
+      id: insertedId,
+      name: name || null,
+      phone
+    });
+  } catch (error: any) {
+    console.error('Create whitelist error:', error);
+    res.status(500).json({ message: error.message || 'Erro ao salvar número.' });
+  }
+});
+
+router.delete('/whitelist/:id', authenticate, async (req: AuthRequest, res) => {
+  try {
+    if (!ensureAdmin(req, res)) return;
+    const currentUserId = Number(req.user?.id);
+    const userContext = await getCurrentUserContext(currentUserId);
+    const { id } = req.params;
+    if (!userContext.companyId) {
+      return res.status(400).json({ message: 'Empresa não vinculada ao usuário.' });
+    }
+    await query(
+      'DELETE FROM lead_whitelist WHERE id = $1 AND company_id = $2',
+      [id, userContext.companyId]
+    );
+    res.json({ message: 'Número removido da white list.' });
+  } catch (error: any) {
+    console.error('Delete whitelist error:', error);
+    res.status(500).json({ message: error.message || 'Erro ao remover número.' });
+  }
+});
+
+// Assign funnel in bulk
+router.post('/bulk-funnel', authenticate, async (req: AuthRequest, res) => {
+  try {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ message: 'Apenas administradores podem atribuir funil em massa' });
+    }
+    const funnelIdRaw = req.body?.funnelId ?? req.body?.funnel_id ?? null;
+    const funnelId = funnelIdRaw !== null && funnelIdRaw !== undefined && funnelIdRaw !== ''
+      ? Number(funnelIdRaw)
+      : null;
+    if (!funnelId || Number.isNaN(funnelId)) {
+      return res.status(400).json({ message: 'Informe um funil válido.' });
+    }
+    const leadIdsRaw = Array.isArray(req.body?.leadIds) ? req.body.leadIds : [];
+    const leadIds = leadIdsRaw
+      .map((value: any) => Number(value))
+      .filter((value: number) => Number.isFinite(value));
+    if (leadIds.length === 0) {
+      return res.status(400).json({ message: 'Informe os leads para atribuição.' });
+    }
+
+    const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
+    const userContext = await getCurrentUserContext(currentUserId);
+    const placeholders = leadIds.map((_: number, index: number) => `$${index + 2}`).join(', ');
+    if (req.user?.role === 'admin') {
+      await query(
+        `UPDATE leads
+         SET funnel_id = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE deleted_at IS NULL
+           AND id IN (${placeholders})`,
+        [funnelId, ...leadIds]
+      );
+    } else if (!userContext.companyId) {
+      await query(
+        `UPDATE leads
+         SET funnel_id = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE deleted_at IS NULL
+           AND id IN (${placeholders})`,
+        [funnelId, ...leadIds]
+      );
+    } else {
+      await query(
+        `UPDATE leads
+         SET funnel_id = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE deleted_at IS NULL
+           AND id IN (${placeholders})
+           AND (company_id = $2 OR (company_id IS NULL AND user_id IN (SELECT id FROM users WHERE company_id = $3)))`,
+        [funnelId, userContext.companyId, userContext.companyId, ...leadIds]
+      );
+    }
+
+    res.json({ message: 'Funil atribuído em massa com sucesso.' });
+  } catch (error: any) {
+    console.error('Bulk funnel assignment error:', error);
+    res.status(500).json({ message: error.message || 'Erro ao atribuir funil em massa.' });
+  }
+});
+
 // Get single lead
 router.get('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
-    let isAdmin = false;
-    let companyUserIds: number[] = [];
-    if (currentUserId) {
-      const userResult = await query('SELECT id, role, company_id FROM users WHERE id = ?', [currentUserId]);
-      const currentUser = userResult.rows && userResult.rows[0];
-      isAdmin = currentUser?.role === 'admin';
-      if (!isAdmin && currentUser?.company_id) {
-        const companyUsers = await query('SELECT id FROM users WHERE company_id = ?', [currentUser.company_id]);
-        companyUserIds = (companyUsers.rows || []).map((row: any) => Number(row.id)).filter(Boolean);
-      }
-    }
+    const userContext = await getCurrentUserContext(currentUserId);
+    const isAdmin = userContext.isAdmin;
 
     const leadResult = await query(
-      'SELECT l.*, u.name as user_name FROM leads l LEFT JOIN users u ON l.user_id = u.id WHERE l.id = ? AND l.deleted_at IS NULL',
+      'SELECT l.*, u.name as user_name, f.name as funnel_name FROM leads l LEFT JOIN users u ON l.user_id = u.id LEFT JOIN funnels f ON l.funnel_id = f.id WHERE l.id = ? AND l.deleted_at IS NULL',
       [id]
     );
 
@@ -352,13 +541,25 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
 
     const lead = leadResult.rows[0];
     if (!isAdmin) {
-      const leadUserId = lead.user_id ? Number(lead.user_id) : null;
-      if (companyUserIds.length > 0) {
-        if (!leadUserId || !companyUserIds.includes(leadUserId)) {
+      if (userContext.companyId) {
+        const leadCompanyId = lead.company_id ? Number(lead.company_id) : null;
+        if (leadCompanyId !== userContext.companyId) {
+          if (!lead.user_id) {
+            return res.status(403).json({ message: 'Acesso negado' });
+          }
+          const companyMatch = await query(
+            'SELECT 1 FROM users WHERE id = ? AND company_id = ?',
+            [lead.user_id, userContext.companyId]
+          );
+          if (!companyMatch.rows || companyMatch.rows.length === 0) {
+            return res.status(403).json({ message: 'Acesso negado' });
+          }
+        }
+      } else if (currentUserId) {
+        const leadUserId = lead.user_id ? Number(lead.user_id) : null;
+        if (leadUserId !== currentUserId) {
           return res.status(403).json({ message: 'Acesso negado' });
         }
-      } else if (currentUserId && leadUserId !== currentUserId) {
-        return res.status(403).json({ message: 'Acesso negado' });
       }
     }
     
@@ -408,15 +609,28 @@ router.get('/:id/history', authenticate, async (req: AuthRequest, res) => {
 router.post('/', authenticate, async (req: AuthRequest, res) => {
   try {
     const { name, phone, email, status = 'novo_lead', origin = 'manual', custom_data = {}, tags = [], notes } = req.body;
+    const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
+    const userContext = await getCurrentUserContext(currentUserId);
 
     if (!name || !phone) {
       return res.status(400).json({ message: 'Nome e telefone são obrigatórios' });
     }
 
     const result = await query(
-      `INSERT INTO leads (name, phone, email, status, origin, user_id, custom_data, tags, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, phone, email, status, origin, (req.user && req.user.id), JSON.stringify(custom_data), JSON.stringify(tags), notes]
+      `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, tags, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        name,
+        phone,
+        email,
+        status,
+        origin,
+        currentUserId,
+        userContext.companyId,
+        JSON.stringify(custom_data),
+        JSON.stringify(tags),
+        notes
+      ]
     );
     const insertedId = (result.rows[0] && result.rows[0].lastInsertRowid) || (result.rows[0] && result.rows[0].id);
     const leadResult = await query('SELECT * FROM leads WHERE id = ?', [insertedId]);
@@ -456,6 +670,16 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { name, phone, email, status, origin, custom_data, tags, notes } = req.body;
+    const requestedUserIdRaw = req.body?.user_id ?? req.body?.userId ?? null;
+    const requestedUserId = requestedUserIdRaw !== null && requestedUserIdRaw !== undefined && requestedUserIdRaw !== ''
+      ? Number(requestedUserIdRaw)
+      : null;
+    const hasFunnelId = Object.prototype.hasOwnProperty.call(req.body || {}, 'funnel_id')
+      || Object.prototype.hasOwnProperty.call(req.body || {}, 'funnelId');
+    const requestedFunnelIdRaw = req.body?.funnel_id ?? req.body?.funnelId ?? null;
+    const requestedFunnelId = requestedFunnelIdRaw !== null && requestedFunnelIdRaw !== undefined && requestedFunnelIdRaw !== ''
+      ? Number(requestedFunnelIdRaw)
+      : null;
     const actorId = req.user && req.user.id ? Number(req.user.id) : null;
     let actorName = 'Usuário';
     if (actorId) {
@@ -503,6 +727,17 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
       return map[statusValue] || statusValue;
     };
 
+    if (requestedUserId !== null && !Number.isNaN(requestedUserId)) {
+      if (req.user?.role !== 'admin') {
+        return res.status(403).json({ message: 'Apenas administradores podem atribuir responsável' });
+      }
+    }
+    if (hasFunnelId) {
+      if (req.user?.role !== 'admin') {
+        return res.status(403).json({ message: 'Apenas administradores podem alterar funil' });
+      }
+    }
+
     // Update lead
     const updateFields: string[] = [];
     const values: any[] = [];
@@ -522,10 +757,18 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     if (status !== undefined) {
       updateFields.push('status = ?');
       values.push(status);
-      if (actorId) {
+      if (actorId && requestedUserId === null) {
         updateFields.push('user_id = ?');
         values.push(actorId);
       }
+    }
+    if (requestedUserId !== null && !Number.isNaN(requestedUserId)) {
+      updateFields.push('user_id = ?');
+      values.push(requestedUserId);
+    }
+    if (hasFunnelId) {
+      updateFields.push('funnel_id = ?');
+      values.push(requestedFunnelId);
     }
     if (origin !== undefined) {
       updateFields.push('origin = ?');
@@ -574,6 +817,13 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
       }
     }
 
+    const nextUserId = requestedUserId !== null && !Number.isNaN(requestedUserId)
+      ? requestedUserId
+      : (status !== undefined && actorId ? actorId : currentLead.user_id);
+    const userChanged = requestedUserId !== null
+      && !Number.isNaN(requestedUserId)
+      && Number(currentLead.user_id || 0) !== requestedUserId;
+
     // Add to history if status changed
     if (status && status !== currentLead.status) {
       const oldLabel = getDisplayLabel(currentLead.status, currentCustomData);
@@ -582,11 +832,23 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
         'INSERT INTO lead_history (lead_id, user_id, action, description, old_status, new_status) VALUES (?, ?, ?, ?, ?, ?)',
         [
           id,
-          actorId,
+          nextUserId,
           'status_changed',
           `Status alterado de ${oldLabel} para ${newLabel} por ${actorName}`,
           currentLead.status,
           status
+        ]
+      );
+    } else if (userChanged) {
+      const newUserResult = await query('SELECT name FROM users WHERE id = ?', [requestedUserId]);
+      const newUserName = newUserResult.rows[0]?.name || 'Usuário';
+      await query(
+        'INSERT INTO lead_history (lead_id, user_id, action, description) VALUES (?, ?, ?, ?)',
+        [
+          id,
+          nextUserId,
+          'responsible_changed',
+          `Responsável alterado para ${newUserName} por ${actorName}`
         ]
       );
     } else {
@@ -606,6 +868,9 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
 // Delete lead
 router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ message: 'Apenas administradores podem excluir leads' });
+    }
     const { id } = req.params;
 
     const result = await query('SELECT * FROM leads WHERE id = ? AND deleted_at IS NULL', [id]);
@@ -638,6 +903,9 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
 // Hard delete lead (for tests)
 router.delete('/:id/hard-delete', authenticate, async (req: AuthRequest, res) => {
   try {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ message: 'Apenas administradores podem excluir leads' });
+    }
     const { id } = req.params;
     const result = await query('SELECT * FROM leads WHERE id = ?', [id]);
     if (result.rows.length === 0) {
@@ -657,6 +925,8 @@ router.post('/import', authenticate, upload.single('file'), async (req: AuthRequ
     if (!req.file) {
       return res.status(400).json({ message: 'Arquivo não fornecido' });
     }
+    const currentUserId = req.user && req.user.id ? Number(req.user.id) : null;
+    const userContext = await getCurrentUserContext(currentUserId);
 
     const leads: any[] = [];
     const stream = Readable.from(req.file.buffer.toString());
@@ -673,9 +943,19 @@ router.post('/import', authenticate, upload.single('file'), async (req: AuthRequ
       for (const leadData of leads) {
         if (leadData.name && leadData.phone) {
           const result = await query(
-            `INSERT INTO leads (name, phone, email, status, origin, user_id, custom_data, tags)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [leadData.name, leadData.phone, leadData.email, leadData.status, leadData.origin, (req.user && req.user.id), JSON.stringify(leadData.custom_data), JSON.stringify(leadData.tags)]
+            `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, tags)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              leadData.name,
+              leadData.phone,
+              leadData.email,
+              leadData.status,
+              leadData.origin,
+              currentUserId,
+              userContext.companyId,
+              JSON.stringify(leadData.custom_data),
+              JSON.stringify(leadData.tags)
+            ]
           );
           const insertedId = (result.rows[0] && result.rows[0].lastInsertRowid) || (result.rows[0] && result.rows[0].id);
           const leadResult = await query('SELECT * FROM leads WHERE id = ?', [insertedId]);
@@ -723,11 +1003,13 @@ router.post('/import', authenticate, upload.single('file'), async (req: AuthRequ
       if (!rows.length) {
         return res.status(400).json({ message: 'Arquivo inválido ou vazio.' });
       }
-      const headerValidation = validateHeaders(Object.keys(rows[0] || {}));
-      if (!headerValidation.ok) {
-        return res.status(400).json({
-          message: `Arquivo inválido. Colunas obrigatórias ausentes: ${headerValidation.missing.join(', ')}.`,
-        });
+      if (!Array.isArray(rows[0])) {
+        const headerValidation = validateHeaders(Object.keys(rows[0] || {}));
+        if (!headerValidation.ok) {
+          return res.status(400).json({
+            message: `Arquivo inválido. Colunas obrigatórias ausentes: ${headerValidation.missing.join(', ')}.`,
+          });
+        }
       }
       rows.forEach((row) => {
         leads.push(mapRowToLead(row));

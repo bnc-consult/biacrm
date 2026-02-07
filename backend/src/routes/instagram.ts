@@ -770,6 +770,12 @@ router.post('/webhook', async (req, res) => {
               );
 
               if (integration.rows.length > 0) {
+                const ownerId = integration.rows[0]?.user_id ? Number(integration.rows[0].user_id) : null;
+                let companyId: number | null = null;
+                if (ownerId) {
+                  const companyResult = await query('SELECT company_id FROM users WHERE id = ?', [ownerId]);
+                  companyId = companyResult.rows[0]?.company_id ? Number(companyResult.rows[0].company_id) : null;
+                }
                 // Process comment as potential lead
                 const commentText = commentData.text || '';
                 const commentFrom = commentData.from || {};
@@ -804,14 +810,16 @@ router.post('/webhook', async (req, res) => {
                 // Create lead in database if we have contact info
                 if (leadData.phone || leadData.email || commentText.length > 10) {
                   const result = await query(
-                    `INSERT INTO leads (name, phone, email, status, origin, custom_data, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+                    `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
                     [
                       leadData.name,
                       leadData.phone || '',
                       leadData.email || null,
                       leadData.status,
                       leadData.origin,
+                      ownerId,
+                      companyId,
                       leadData.custom_data
                     ]
                   );
@@ -845,6 +853,12 @@ router.post('/webhook', async (req, res) => {
               );
 
               if (integration.rows.length > 0) {
+                const ownerId = integration.rows[0]?.user_id ? Number(integration.rows[0].user_id) : null;
+                let companyId: number | null = null;
+                if (ownerId) {
+                  const companyResult = await query('SELECT company_id FROM users WHERE id = ?', [ownerId]);
+                  companyId = companyResult.rows[0]?.company_id ? Number(companyResult.rows[0].company_id) : null;
+                }
                 const mentionFrom = mentionData.from || {};
                 const leadData = {
                   name: mentionFrom.username || 'Lead Instagram',
@@ -861,14 +875,16 @@ router.post('/webhook', async (req, res) => {
                 };
 
                 const result = await query(
-                  `INSERT INTO leads (name, phone, email, status, origin, custom_data, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+                  `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
                   [
                     leadData.name,
                     leadData.phone,
                     leadData.email || null,
                     leadData.status,
                     leadData.origin,
+                    ownerId,
+                    companyId,
                     leadData.custom_data
                   ]
                 );

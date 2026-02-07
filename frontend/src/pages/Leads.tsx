@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import {
   DndContext,
   DragEndEvent,
@@ -39,6 +40,7 @@ interface Lead {
   name: string;
   phone: string;
   email?: string;
+  user_name?: string;
   status: string;
   origin: string;
   product?: string;
@@ -46,6 +48,8 @@ interface Lead {
   isNew?: boolean;
   custom_data?: any;
   unread_count?: number;
+  funnel_id?: number | null;
+  funnel_name?: string | null;
 }
 
 // Função para obter o status de exibição baseado no status do backend e displayStatus
@@ -139,6 +143,7 @@ const getBackendStatus = (displayStatus: string, customData?: any): { status: st
 interface ImportTask {
   id: string;
   createdAt: string;
+  fileName: string;
   queue: string;
   interval: string;
   savedLeads: string;
@@ -194,6 +199,8 @@ function arrayMove<T>(array: T[], oldIndex: number, newIndex: number): T[] {
 
 export default function Leads() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -207,14 +214,28 @@ export default function Leads() {
   const [showFiltersModal, setShowFiltersModal] = useState(false);
   const [filters, setFilters] = useState({
     name: '',
+    responsible: '',
     phone: '',
     product: '',
+    interest: '',
+    city: '',
+    email: '',
     status: '',
     createdFrom: '',
     createdTo: '',
   });
+  const [userOptions, setUserOptions] = useState<Array<{ id: number; name: string }>>([]);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const [funnels, setFunnels] = useState<Array<{ id: number; name: string }>>([]);
+  const [funnelLoadError, setFunnelLoadError] = useState<string | null>(null);
+  const [editingFunnelLeadId, setEditingFunnelLeadId] = useState<number | null>(null);
+  const [editingFunnelValue, setEditingFunnelValue] = useState<string>('');
+  const [isSavingFunnel, setIsSavingFunnel] = useState(false);
+  const [showBulkFunnelModal, setShowBulkFunnelModal] = useState(false);
+  const [bulkFunnelId, setBulkFunnelId] = useState<string>('');
+  const [bulkFunnelError, setBulkFunnelError] = useState<string | null>(null);
+  const [bulkFunnelSaving, setBulkFunnelSaving] = useState(false);
   
   // Estados para o modal de cadastro de Lead
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
@@ -245,6 +266,7 @@ export default function Leads() {
     { id: 'phone', label: 'Telefone', sortable: false, visible: true },
     { id: 'product', label: 'Produto', sortable: true, visible: true },
     { id: 'created_at', label: 'Criado em', sortable: false, visible: true },
+    { id: 'funnel', label: 'Funil', sortable: false, visible: true },
     { id: 'status', label: 'Status', sortable: true, visible: true },
     { id: 'action', label: 'Ação', sortable: false, visible: true },
   ];
@@ -299,17 +321,21 @@ export default function Leads() {
   };
 
   // Mock data para importações
-  const [importTasks, setImportTasks] = useState<ImportTask[]>([
-    {
-      id: '1',
-      createdAt: '07/11/2025, 22:25',
-      queue: '--',
-      interval: 'Sem intervalo',
-      savedLeads: '7 / 8',
-      errorLeads: '--',
-      status: 'em_progresso',
-    },
-  ]);
+  const [importTasks, setImportTasks] = useState<ImportTask[]>(() => {
+    try {
+      const saved = localStorage.getItem('importTasks');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed : [];
+      }
+    } catch (e) {
+      console.error('Error loading import history:', e);
+    }
+    return [];
+  });
+  useEffect(() => {
+    localStorage.setItem('importTasks', JSON.stringify(importTasks));
+  }, [importTasks]);
 
   // Função para criar novo Lead
   const handleCreateLead = async () => {
@@ -375,6 +401,7 @@ export default function Leads() {
       const newTask: ImportTask = {
         id: Date.now().toString(),
         createdAt: formattedDate,
+        fileName: fileToUpload.name,
         queue: '--',
         interval: 'Sem intervalo',
         savedLeads: `${response.data.total} / ${response.data.total}`,
@@ -400,6 +427,19 @@ export default function Leads() {
 
     } catch (error: any) {
       console.error('Erro ao importar:', error);
+      const now = new Date();
+      const formattedDate = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getFullYear()}, ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      const newTask: ImportTask = {
+        id: Date.now().toString(),
+        createdAt: formattedDate,
+        fileName: file.name,
+        queue: '--',
+        interval: 'Sem intervalo',
+        savedLeads: '--',
+        errorLeads: '--',
+        status: 'erro',
+      };
+      setImportTasks(prev => [newTask, ...prev]);
       setImportMessage({ 
         type: 'error', 
         text: error.response?.data?.message || 'Erro ao importar arquivo. Verifique o formato e tente novamente.' 
@@ -411,6 +451,8 @@ export default function Leads() {
 
   useEffect(() => {
     fetchLeads();
+    fetchUserOptions();
+    fetchFunnels();
     const refreshTimer = setInterval(fetchLeads, 5000);
 
     const handleLeadUpdated = () => {
@@ -454,6 +496,95 @@ export default function Leads() {
       console.error('Error fetching leads:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchFunnels = async () => {
+    try {
+      const response = await api.get('/funnels');
+      const list = Array.isArray(response.data) ? response.data : [];
+      setFunnels(list);
+      setFunnelLoadError(null);
+    } catch (error: any) {
+      const message = error.response?.data?.message || 'Erro ao carregar funis.';
+      setFunnelLoadError(message);
+      setFunnels([]);
+    }
+  };
+
+  const handleStartEditFunnel = (lead: Lead) => {
+    setEditingFunnelLeadId(lead.id);
+    setEditingFunnelValue(lead.funnel_id ? String(lead.funnel_id) : '');
+  };
+
+  const handleCancelEditFunnel = () => {
+    setEditingFunnelLeadId(null);
+    setEditingFunnelValue('');
+  };
+
+  const handleSaveLeadFunnel = async (lead: Lead) => {
+    if (!isAdmin || isSavingFunnel) return;
+    setIsSavingFunnel(true);
+    try {
+      await api.put(`/leads/${lead.id}`, {
+        funnelId: editingFunnelValue ? Number(editingFunnelValue) : null,
+      });
+      const selected = funnels.find((f) => String(f.id) === editingFunnelValue);
+      setLeads((prev) =>
+        prev.map((item) =>
+          item.id === lead.id
+            ? {
+                ...item,
+                funnel_id: editingFunnelValue ? Number(editingFunnelValue) : null,
+                funnel_name: selected?.name || null,
+              }
+            : item
+        )
+      );
+      handleCancelEditFunnel();
+    } catch (error) {
+      console.error('Erro ao atualizar funil do lead:', error);
+    } finally {
+      setIsSavingFunnel(false);
+    }
+  };
+
+  const handleBulkAssignFunnel = async () => {
+    if (!isAdmin || bulkFunnelSaving) return;
+    if (!bulkFunnelId) {
+      setBulkFunnelError('Selecione um funil.');
+      return;
+    }
+    const leadIds = selectedLeads.length > 0
+      ? selectedLeads
+      : filteredLeads.map((lead) => lead.id);
+    if (leadIds.length === 0) {
+      setBulkFunnelError('Não há leads para atribuir.');
+      return;
+    }
+    setBulkFunnelSaving(true);
+    setBulkFunnelError(null);
+    try {
+      await api.post('/leads/bulk-funnel', { funnelId: Number(bulkFunnelId), leadIds });
+      await fetchLeads();
+      setSelectedLeads([]);
+      setShowBulkFunnelModal(false);
+      setBulkFunnelId('');
+    } catch (error: any) {
+      const message = error.response?.data?.message || 'Erro ao atribuir funil em massa.';
+      setBulkFunnelError(message);
+    } finally {
+      setBulkFunnelSaving(false);
+    }
+  };
+  
+  const fetchUserOptions = async () => {
+    try {
+      const response = await api.get('/dashboard/users');
+      const options = Array.isArray(response.data) ? response.data : [];
+      setUserOptions(options);
+    } catch (error) {
+      console.error('Error fetching user options:', error);
     }
   };
 
@@ -513,6 +644,7 @@ export default function Leads() {
       await api.delete(`/leads/${lead.id}`);
       setLeads(prev => prev.filter(item => item.id !== lead.id));
       setSelectedLeads(prev => prev.filter(id => id !== lead.id));
+      window.dispatchEvent(new CustomEvent('leadsDeleted'));
     } catch (error) {
       console.error('Erro ao excluir lead:', error);
     }
@@ -525,6 +657,7 @@ export default function Leads() {
       await api.delete(`/leads/${lead.id}/hard-delete`);
       setLeads(prev => prev.filter(item => item.id !== lead.id));
       setSelectedLeads(prev => prev.filter(id => id !== lead.id));
+      window.dispatchEvent(new CustomEvent('leadsDeleted'));
     } catch (error) {
       console.error('Erro ao apagar lead do banco:', error);
     }
@@ -555,6 +688,7 @@ export default function Leads() {
       await Promise.all(selectedLeads.map((leadId) => api.delete(`/leads/${leadId}`)));
       setLeads(prev => prev.filter(item => !selectedLeads.includes(item.id)));
       setSelectedLeads([]);
+      window.dispatchEvent(new CustomEvent('leadsDeleted'));
     } catch (error) {
       console.error('Erro ao excluir leads selecionados:', error);
     } finally {
@@ -691,22 +825,48 @@ export default function Leads() {
   });
 
   const filteredLeads = sortedLeads.filter(lead => {
-    const normalizedSearch = searchTerm.toLowerCase();
+    const displayStatus = getDisplayStatus(lead);
+    const statusLabel = statusConfig[displayStatus]?.label?.toLowerCase() || displayStatus.toLowerCase();
+    const normalizedSearch = searchTerm.trim().toLowerCase();
     const matchesSearch = !normalizedSearch
       || lead.name.toLowerCase().includes(normalizedSearch)
       || lead.phone.includes(normalizedSearch)
-      || (lead.email && lead.email.toLowerCase().includes(normalizedSearch));
+      || (lead.email && lead.email.toLowerCase().includes(normalizedSearch))
+      || (lead.funnel_name || '').toLowerCase().includes(normalizedSearch)
+      || statusLabel.includes(normalizedSearch)
+      || displayStatus.toLowerCase().includes(normalizedSearch);
     if (!matchesSearch) return false;
 
-    const displayStatus = getDisplayStatus(lead);
     const matchesName = !filters.name || lead.name.toLowerCase().includes(filters.name.toLowerCase());
+    const matchesResponsible = !filters.responsible
+      || (lead.user_name || '').toLowerCase().includes(filters.responsible.toLowerCase());
     const matchesPhone = !filters.phone || lead.phone.includes(filters.phone);
     const matchesProduct = !filters.product || (lead.product || '').toLowerCase().includes(filters.product.toLowerCase());
+    const matchesInterest = !filters.interest
+      || (lead.custom_data?.interesse || '').toLowerCase().includes(filters.interest.toLowerCase());
+    const matchesCity = !filters.city
+      || (lead.custom_data?.cidade || '').toLowerCase().includes(filters.city.toLowerCase());
+    const matchesEmail = !filters.email
+      || (lead.email || '').toLowerCase().includes(filters.email.toLowerCase());
     const matchesStatus = !filters.status || displayStatus === filters.status;
     const matchesDate = isWithinDateRange(lead.created_at);
 
-    return matchesName && matchesPhone && matchesProduct && matchesStatus && matchesDate;
+    return matchesName
+      && matchesResponsible
+      && matchesPhone
+      && matchesProduct
+      && matchesInterest
+      && matchesCity
+      && matchesEmail
+      && matchesStatus
+      && matchesDate;
   });
+  
+  const filteredResponsibleOptions = userOptions.filter((user) =>
+    (filters.responsible || '').trim()
+      ? user.name.toLowerCase().includes(filters.responsible.toLowerCase())
+      : true
+  );
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -773,15 +933,30 @@ export default function Leads() {
               <FiList className="w-4 h-4" />
               <span>Ordem</span>
             </button>
-            <button
-              onClick={handleDeleteSelectedLeads}
-              disabled={selectedLeads.length === 0 || isBulkDeleting}
-              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Excluir leads selecionados"
-            >
-              <FiTrash2 className="w-4 h-4" />
-              <span>{isBulkDeleting ? 'Excluindo...' : 'Excluir Selecionados'}</span>
-            </button>
+            {isAdmin && (
+              <button
+                onClick={handleDeleteSelectedLeads}
+                disabled={selectedLeads.length === 0 || isBulkDeleting}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Excluir leads selecionados"
+              >
+                <FiTrash2 className="w-4 h-4" />
+                <span>{isBulkDeleting ? 'Excluindo...' : 'Excluir Selecionados'}</span>
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  setBulkFunnelError(null);
+                  setShowBulkFunnelModal(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                title="Atribuir funil em massa"
+              >
+                <FiEdit className="w-4 h-4" />
+                <span>Atribuir Funil</span>
+              </button>
+            )}
             <button 
               onClick={() => setShowAddLeadModal(true)}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -979,6 +1154,58 @@ export default function Leads() {
                           </td>
                         );
                       }
+                      if (column.id === 'funnel') {
+                        if (!isAdmin) {
+                          return (
+                            <td key={column.id} className="px-4 py-3 text-sm text-gray-600">
+                              {lead.funnel_name || 'Sem funil'}
+                            </td>
+                          );
+                        }
+                        const isEditing = editingFunnelLeadId === lead.id;
+                        return (
+                          <td key={column.id} className="px-4 py-3 text-sm text-gray-600">
+                            {isEditing ? (
+                              <div className="flex items-center gap-2">
+                                <select
+                                  value={editingFunnelValue}
+                                  onChange={(e) => setEditingFunnelValue(e.target.value)}
+                                  className="border border-gray-300 rounded-md px-2 py-1 text-sm bg-white"
+                                >
+                                  <option value="">Sem funil</option>
+                                  {funnels.map((funnel) => (
+                                    <option key={funnel.id} value={String(funnel.id)}>
+                                      {funnel.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() => handleSaveLeadFunnel(lead)}
+                                  className="text-blue-600 hover:text-blue-700 text-xs"
+                                  disabled={isSavingFunnel}
+                                >
+                                  Salvar
+                                </button>
+                                <button
+                                  onClick={handleCancelEditFunnel}
+                                  className="text-gray-500 hover:text-gray-700 text-xs"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => handleStartEditFunnel(lead)}
+                                className="flex items-center gap-2 text-sm text-blue-700 hover:text-blue-800"
+                                title="Alterar funil"
+                              >
+                                <span>{lead.funnel_name || 'Sem funil'}</span>
+                                <FiEdit className="w-3 h-3" />
+                              </button>
+                            )}
+                          </td>
+                        );
+                      }
                       if (column.id === 'created_at') {
                         return (
                           <td key={column.id} className="px-4 py-3 text-sm text-gray-600">
@@ -1020,20 +1247,24 @@ export default function Leads() {
                               >
                                 <FiEdit className="w-5 h-5" />
                               </button>
-                              <button
-                                onClick={() => handleDeleteLead(lead)}
-                                className="text-red-600 hover:text-red-700"
-                                title="Excluir"
-                              >
-                                <FiTrash2 className="w-5 h-5" />
-                              </button>
-                              <button
-                                onClick={() => handleHardDeleteLead(lead)}
-                                className="text-red-700 hover:text-red-800"
-                                title="Apagar do banco"
-                              >
-                                <FiXCircle className="w-5 h-5" />
-                              </button>
+                              {isAdmin && (
+                                <>
+                                  <button
+                                    onClick={() => handleDeleteLead(lead)}
+                                    className="text-red-600 hover:text-red-700"
+                                    title="Excluir"
+                                  >
+                                    <FiTrash2 className="w-5 h-5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleHardDeleteLead(lead)}
+                                    className="text-red-700 hover:text-red-800"
+                                    title="Apagar do banco"
+                                  >
+                                    <FiXCircle className="w-5 h-5" />
+                                  </button>
+                                </>
+                              )}
                               {unreadCount > 0 && (
                                 <span className="min-w-[20px] h-5 px-1.5 ml-3 rounded-full bg-red-500 text-white text-[11px] font-semibold flex items-center justify-center">
                                   {unreadCount > 99 ? '99+' : unreadCount}
@@ -1059,6 +1290,65 @@ export default function Leads() {
           Carregar mais
         </button>
       </div>
+
+      {showBulkFunnelModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 className="text-lg font-bold text-gray-900">Atribuir funil em massa</h2>
+              <button
+                onClick={() => setShowBulkFunnelModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <FiX className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="text-xs text-gray-500">
+                {selectedLeads.length > 0
+                  ? `Aplicar para ${selectedLeads.length} lead(s) selecionado(s).`
+                  : `Aplicar para ${filteredLeads.length} lead(s) filtrado(s).`}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Funil</label>
+                <select
+                  value={bulkFunnelId}
+                  onChange={(e) => setBulkFunnelId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+                >
+                  <option value="">Selecione...</option>
+                  {funnels.map((funnel) => (
+                    <option key={funnel.id} value={String(funnel.id)}>
+                      {funnel.name}
+                    </option>
+                  ))}
+                </select>
+                {funnelLoadError && (
+                  <div className="text-xs text-red-600 mt-2">{funnelLoadError}</div>
+                )}
+                {bulkFunnelError && (
+                  <div className="text-xs text-red-600 mt-2">{bulkFunnelError}</div>
+                )}
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setShowBulkFunnelModal(false)}
+                  className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleBulkAssignFunnel}
+                  className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+                  disabled={bulkFunnelSaving}
+                >
+                  {bulkFunnelSaving ? 'Atribuindo...' : 'Atribuir'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de Importação */}
       {showImportModal && (
@@ -1100,6 +1390,7 @@ export default function Leads() {
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
                       <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Data criação</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Arquivo</th>
                       <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">
                         <div className="flex items-center gap-1">
                           Fila / Corretor
@@ -1110,13 +1401,13 @@ export default function Leads() {
                       <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Leads salvos</th>
                       <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Leads com erro</th>
                       <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Ação</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {importTasks.map((task) => (
                       <tr key={task.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3 text-sm text-gray-900">{task.createdAt}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{task.fileName || '--'}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{task.queue}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{task.interval}</td>
                         <td className="px-4 py-3 text-sm text-gray-900">{task.savedLeads}</td>
@@ -1129,11 +1420,6 @@ export default function Leads() {
                           <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded">
                             {task.status === 'em_progresso' ? 'Em progresso' : task.status === 'concluido' ? 'Concluído' : 'Erro'}
                           </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <button className="text-red-600 hover:text-red-700">
-                            <FiTrash2 className="w-5 h-5" />
-                          </button>
                         </td>
                       </tr>
                     ))}
@@ -1197,6 +1483,21 @@ export default function Leads() {
                   />
                 </div>
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Responsável pelo lead</label>
+                  <input
+                    type="text"
+                    value={filters.responsible}
+                    onChange={(e) => setFilters(prev => ({ ...prev, responsible: e.target.value }))}
+                    list="responsible-options"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <datalist id="responsible-options">
+                    {filteredResponsibleOptions.map((user) => (
+                      <option key={user.id} value={user.name} />
+                    ))}
+                  </datalist>
+                </div>
+                <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Telefone</label>
                   <input
                     type="text"
@@ -1211,6 +1512,33 @@ export default function Leads() {
                     type="text"
                     value={filters.product}
                     onChange={(e) => setFilters(prev => ({ ...prev, product: e.target.value }))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Interesse</label>
+                  <input
+                    type="text"
+                    value={filters.interest}
+                    onChange={(e) => setFilters(prev => ({ ...prev, interest: e.target.value }))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cidade</label>
+                  <input
+                    type="text"
+                    value={filters.city}
+                    onChange={(e) => setFilters(prev => ({ ...prev, city: e.target.value }))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={filters.email}
+                    onChange={(e) => setFilters(prev => ({ ...prev, email: e.target.value }))}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -1254,7 +1582,18 @@ export default function Leads() {
             <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200">
               <button
                 onClick={() =>
-                  setFilters({ name: '', phone: '', product: '', status: '', createdFrom: '', createdTo: '' })
+                  setFilters({
+                    name: '',
+                    responsible: '',
+                    phone: '',
+                    product: '',
+                    interest: '',
+                    city: '',
+                    email: '',
+                    status: '',
+                    createdFrom: '',
+                    createdTo: ''
+                  })
                 }
                 className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
               >

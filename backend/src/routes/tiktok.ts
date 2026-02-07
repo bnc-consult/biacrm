@@ -374,6 +374,21 @@ router.post('/webhook/leads', async (req, res) => {
     const { event_type, data } = req.body;
 
     if (event_type === 'LEAD') {
+      const advertiserId = (data && (data.advertiser_id || data.advertiserId)) || null;
+      let ownerId: number | null = null;
+      let companyId: number | null = null;
+      if (advertiserId) {
+        const integrationResult = await query(
+          'SELECT user_id FROM tiktok_integrations WHERE advertiser_id = ? AND status = ?',
+          [String(advertiserId), 'active']
+        );
+        ownerId = integrationResult.rows[0]?.user_id ? Number(integrationResult.rows[0].user_id) : null;
+        if (ownerId) {
+          const companyResult = await query('SELECT company_id FROM users WHERE id = ?', [ownerId]);
+          companyId = companyResult.rows[0]?.company_id ? Number(companyResult.rows[0].company_id) : null;
+        }
+      }
+
       // Process lead data
       const leadData = {
         name: (data && data.contact_name) || (data && data.name) || '',
@@ -387,20 +402,23 @@ router.post('/webhook/leads', async (req, res) => {
           tiktok_campaign_id: (data && data.campaign_id),
           tiktok_form_id: (data && data.form_id),
           tiktok_lead_id: (data && data.lead_id),
+          tiktok_advertiser_id: advertiserId,
           ...data
         })
       };
 
       // Create lead in database
       const result = await query(
-        `INSERT INTO leads (name, phone, email, status, origin, custom_data, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        `INSERT INTO leads (name, phone, email, status, origin, user_id, company_id, custom_data, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [
           leadData.name,
           leadData.phone,
           leadData.email || null,
           leadData.status,
           leadData.origin,
+          ownerId,
+          companyId,
           leadData.custom_data
         ]
       );

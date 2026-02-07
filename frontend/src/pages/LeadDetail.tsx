@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import {
   FiPhone,
   FiMessageCircle,
@@ -22,6 +23,7 @@ interface Lead {
   name: string;
   phone: string;
   email?: string;
+  user_id?: number | null;
   status: string;
   origin: string;
   notes?: string;
@@ -135,6 +137,8 @@ const getBackendStatus = (displayStatus: string, customData?: any): { status: st
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -162,10 +166,22 @@ export default function LeadDetail() {
   const [whatsappIntegrationActive, setWhatsappIntegrationActive] = useState(false);
   const [whatsappIntegrationLoadedAt, setWhatsappIntegrationLoadedAt] = useState(0);
   const [whatsappThread, setWhatsappThread] = useState<{ id: string; text: string; direction: 'out' | 'in'; at: string; mediaUrl?: string | null; mediaType?: string | null }[]>([]);
+  const [isWhatsAppNearBottom, setIsWhatsAppNearBottom] = useState(true);
   const whatsappChatRef = useRef<HTMLDivElement | null>(null);
   const [showPhoneNumber, setShowPhoneNumber] = useState(false);
   const [showCallHint, setShowCallHint] = useState(false);
   const [copyPhoneSuccess, setCopyPhoneSuccess] = useState(false);
+  const [manualInterest, setManualInterest] = useState('');
+  const [manualCity, setManualCity] = useState('');
+  const [manualEmail, setManualEmail] = useState('');
+  const [isManualDetailsDirty, setIsManualDetailsDirty] = useState(false);
+  const manualDetailsInitialRef = useRef({ interest: '', city: '', email: '' });
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [isSavingManualDetails, setIsSavingManualDetails] = useState(false);
+  const [userOptions, setUserOptions] = useState<Array<{ id: number; name: string }>>([]);
+  const [responsibleName, setResponsibleName] = useState('');
+  const [responsibleError, setResponsibleError] = useState<string | null>(null);
+  const [isSavingResponsible, setIsSavingResponsible] = useState(false);
 
   useEffect(() => {
     if (id && !isNaN(parseInt(id))) {
@@ -285,6 +301,10 @@ export default function LeadDetail() {
 
   const handleDeleteLead = async () => {
     if (!lead) return;
+    if (!isAdmin) {
+      alert('Apenas administradores podem excluir leads.');
+      return;
+    }
     const confirmed = window.confirm('Deseja realmente excluir este lead?');
     if (!confirmed) return;
     try {
@@ -296,6 +316,38 @@ export default function LeadDetail() {
       alert('Não foi possível excluir o lead. Tente novamente.');
     } finally {
       setIsDeletingLead(false);
+    }
+  };
+
+  const handleSaveResponsible = async () => {
+    if (!lead || !isAdmin) return;
+    setResponsibleError(null);
+    const trimmedName = responsibleName.trim();
+    if (!trimmedName) {
+      setResponsibleError('Selecione um responsável.');
+      return;
+    }
+    const selectedUser = userOptions.find((option) =>
+      option.name.toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (!selectedUser) {
+      setResponsibleError('Responsável inválido.');
+      return;
+    }
+    setIsSavingResponsible(true);
+    try {
+      const response = await api.put(`/leads/${lead.id}`, {
+        userId: selectedUser.id
+      });
+      const parsedLead = parseLeadData(response.data);
+      setLead(parsedLead);
+      const historyResponse = await api.get(`/leads/${lead.id}/history`);
+      setTimeline(historyResponse.data || []);
+    } catch (error: any) {
+      console.error('Erro ao atribuir responsável:', error);
+      setResponsibleError(error.response?.data?.message || 'Erro ao salvar responsável.');
+    } finally {
+      setIsSavingResponsible(false);
     }
   };
 
@@ -405,10 +457,31 @@ export default function LeadDetail() {
   useEffect(() => {
     if (!showWhatsAppPanel) return;
     const node = whatsappChatRef.current;
-    if (node) {
-      node.scrollTop = node.scrollHeight;
+    if (!node) return;
+
+    const handleScroll = () => {
+      const threshold = 100;
+      const isNearBottom =
+        node.scrollHeight - node.scrollTop - node.clientHeight <= threshold;
+      setIsWhatsAppNearBottom(isNearBottom);
+    };
+
+    handleScroll();
+    node.addEventListener('scroll', handleScroll);
+    return () => {
+      node.removeEventListener('scroll', handleScroll);
+    };
+  }, [showWhatsAppPanel]);
+
+  useEffect(() => {
+    if (!showWhatsAppPanel) return;
+    const node = whatsappChatRef.current;
+    if (node && isWhatsAppNearBottom) {
+      requestAnimationFrame(() => {
+        node.scrollTop = node.scrollHeight;
+      });
     }
-  }, [showWhatsAppPanel, whatsappThread]);
+  }, [showWhatsAppPanel, whatsappThread, isWhatsAppNearBottom]);
 
   const parseLeadData = (leadData: any): Lead => {
     // Parse custom_data se for string
@@ -430,6 +503,25 @@ export default function LeadDetail() {
       setVisitDateTime(toInputDateTime(stored));
     }
   }, [lead]);
+  
+  useEffect(() => {
+    if (!lead) return;
+    setManualInterest(lead.custom_data?.interesse || '');
+    setManualCity(lead.custom_data?.cidade || '');
+    setManualEmail(lead.email || '');
+    manualDetailsInitialRef.current = {
+      interest: lead.custom_data?.interesse || '',
+      city: lead.custom_data?.cidade || '',
+      email: lead.email || ''
+    };
+    setIsManualDetailsDirty(false);
+    setResponsibleName(lead.user_name || '');
+  }, [lead]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetchUserOptions();
+  }, [isAdmin]);
 
   const loadScheduledMessage = async (leadId: number) => {
     try {
@@ -454,6 +546,16 @@ export default function LeadDetail() {
     } catch (error) {
       console.error('Erro ao buscar agendamentos:', error);
       setScheduledItems([]);
+    }
+  };
+
+  const fetchUserOptions = async () => {
+    try {
+      const response = await api.get('/dashboard/users');
+      const options = Array.isArray(response.data) ? response.data : [];
+      setUserOptions(options);
+    } catch (error) {
+      console.error('Error fetching user options:', error);
     }
   };
 
@@ -720,7 +822,23 @@ export default function LeadDetail() {
       alert('Selecione a data e hora do contato.');
       return;
     }
-    const message = scheduledMessage.trim();
+    const applyLeadTemplate = (text: string) => {
+      const data = {
+        name: lead.name || '',
+        nome: lead.name || '',
+        email: lead.email || '',
+        telefone: lead.phone || '',
+        phone: lead.phone || '',
+        cidade: lead.custom_data?.cidade || '',
+        interesse: lead.custom_data?.interesse || '',
+        empresa: lead.custom_data?.contact_company || lead.custom_data?.lead_company || ''
+      };
+      return text.replace(/\{\{\s*([a-zA-Z_]+)\s*\}\}|\{\s*([a-zA-Z_]+)\s*\}/g, (_match, g1, g2) => {
+        const key = String(g1 || g2 || '').toLowerCase();
+        return (data as any)[key] ?? '';
+      });
+    };
+    const message = applyLeadTemplate(scheduledMessage).trim();
     if (!message) {
       alert('Digite a mensagem automática.');
       return;
@@ -803,6 +921,49 @@ export default function LeadDetail() {
       setIsSavingNote(false);
     }
   };
+  
+  const handleSaveManualDetails = async () => {
+    if (!lead) return;
+    if (!manualInterest.trim() && !manualCity.trim() && !manualEmail.trim()) {
+      setManualError('Preencha ao menos um campo para salvar.');
+      return;
+    }
+    setManualError(null);
+    setIsSavingManualDetails(true);
+    try {
+      const updatedCustomData = {
+        ...(lead.custom_data || {}),
+        interesse: manualInterest.trim(),
+        cidade: manualCity.trim()
+      };
+      const response = await api.put(`/leads/${lead.id}`, {
+        email: manualEmail.trim() || null,
+        custom_data: updatedCustomData
+      });
+      const parsedLead = parseLeadData(response.data);
+      setLead(parsedLead);
+      manualDetailsInitialRef.current = {
+        interest: parsedLead.custom_data?.interesse || '',
+        city: parsedLead.custom_data?.cidade || '',
+        email: parsedLead.email || ''
+      };
+      setIsManualDetailsDirty(false);
+      setTimeline(prev => [
+        {
+          id: Date.now(),
+          date: new Date().toISOString(),
+          description: 'Detalhes do lead atualizados.',
+          source: 'USUÁRIO',
+        },
+        ...prev
+      ]);
+    } catch (error: any) {
+      console.error('Erro ao salvar detalhes do lead:', error);
+      setManualError(error.response?.data?.message || 'Erro ao salvar detalhes. Tente novamente.');
+    } finally {
+      setIsSavingManualDetails(false);
+    }
+  };
 
   const handleSaveVisitDate = async () => {
     if (!lead) return;
@@ -853,6 +1014,27 @@ export default function LeadDetail() {
     return notes.split('\n\n').filter(note => note.trim());
   };
 
+  const renderMessageText = (text: string) => {
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(urlRegex);
+    return parts.map((part, index) => {
+      if (urlRegex.test(part)) {
+        return (
+          <a
+            key={`link-${index}`}
+            href={part}
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-700 underline break-all"
+          >
+            {part}
+          </a>
+        );
+      }
+      return <span key={`text-${index}`}>{part}</span>;
+    });
+  };
+
   if (loading || !lead) {
     return (
       <div className="p-8 flex items-center justify-center h-screen bg-gray-50">
@@ -869,6 +1051,9 @@ export default function LeadDetail() {
   const currentStatus = statusConfig[displayStatus] || statusConfig.sem_atendimento;
   const lastReceivedAt =
     getLatestMessageDate(whatsappThread, 'in') || getLatestMessageDate(whatsappThread);
+  const isManualDetailsEmpty =
+    !manualInterest.trim() && !manualCity.trim() && !manualEmail.trim();
+  const canSaveManualDetails = isManualDetailsDirty && !isManualDetailsEmpty;
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -908,14 +1093,16 @@ export default function LeadDetail() {
                 >
                 <FiPhone className="w-5 h-5" />
                 </button>
-                <button
-                  onClick={handleDeleteLead}
-                  disabled={isDeletingLead}
-                  className="p-2 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-60"
-                  title="Excluir lead"
-                >
-                  <FiTrash2 className="w-5 h-5" />
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={handleDeleteLead}
+                    disabled={isDeletingLead}
+                    className="p-2 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-60"
+                    title="Excluir lead"
+                  >
+                    <FiTrash2 className="w-5 h-5" />
+                  </button>
+                )}
               </div>
               {showPhoneNumber && lead.phone && (
                 <div className="text-xs text-blue-100 bg-blue-700/60 px-3 py-1 rounded-full">
@@ -949,6 +1136,41 @@ export default function LeadDetail() {
                 <div>
                   <label className="text-sm font-medium text-gray-700">Responsável pelo lead</label>
                   <p className="mt-1 text-sm text-gray-900">{lead.user_name || 'Sem responsável definido'}</p>
+                  {isAdmin && (
+                    <div className="mt-3 space-y-2">
+                      <input
+                        type="text"
+                        value={responsibleName}
+                        onChange={(e) => setResponsibleName(e.target.value)}
+                        list="lead-responsible-options"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Digite o nome do responsável"
+                      />
+                      <datalist id="lead-responsible-options">
+                        {userOptions
+                          .filter((option) =>
+                            responsibleName.trim()
+                              ? option.name.toLowerCase().includes(responsibleName.toLowerCase())
+                              : true
+                          )
+                          .map((option) => (
+                            <option key={option.id} value={option.name} />
+                          ))}
+                      </datalist>
+                      {responsibleError && (
+                        <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+                          {responsibleError}
+                        </div>
+                      )}
+                      <button
+                        onClick={handleSaveResponsible}
+                        disabled={isSavingResponsible}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50"
+                      >
+                        {isSavingResponsible ? 'Salvando...' : 'Salvar responsável'}
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="text-sm font-medium text-gray-700">Origem</label>
@@ -958,6 +1180,82 @@ export default function LeadDetail() {
                     <div className="flex items-center gap-1">
                       <FiFileText className="w-4 h-4 text-gray-500" />
                       <span className="text-sm text-gray-900">Importação</span>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700">Informações do lead</label>
+                  <div className="mt-2 grid grid-cols-1 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Interesse</label>
+                      <input
+                        type="text"
+                        value={manualInterest}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setManualInterest(value);
+                          const initial = manualDetailsInitialRef.current;
+                          setIsManualDetailsDirty(
+                            value !== initial.interest ||
+                              manualCity !== initial.city ||
+                              manualEmail !== initial.email
+                          );
+                        }}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Ex: apartamento, consultoria, automação"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Cidade</label>
+                      <input
+                        type="text"
+                        value={manualCity}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setManualCity(value);
+                          const initial = manualDetailsInitialRef.current;
+                          setIsManualDetailsDirty(
+                            manualInterest !== initial.interest ||
+                              value !== initial.city ||
+                              manualEmail !== initial.email
+                          );
+                        }}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Ex: Belo Horizonte"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Email</label>
+                      <input
+                        type="email"
+                        value={manualEmail}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setManualEmail(value);
+                          const initial = manualDetailsInitialRef.current;
+                          setIsManualDetailsDirty(
+                            manualInterest !== initial.interest ||
+                              manualCity !== initial.city ||
+                              value !== initial.email
+                          );
+                        }}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="email@empresa.com"
+                      />
+                    </div>
+                    {manualError && (
+                      <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+                        {manualError}
+                      </div>
+                    )}
+                    <div>
+                      <button
+                        onClick={handleSaveManualDetails}
+                        disabled={isSavingManualDetails || !canSaveManualDetails}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50"
+                      >
+                        {isSavingManualDetails ? 'Salvando...' : 'Salvar dados'}
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1159,7 +1457,10 @@ export default function LeadDetail() {
                                   const src = msg.mediaUrl.startsWith('http')
                                     ? msg.mediaUrl
                                     : `${window.location.origin}${msg.mediaUrl}`;
-                                  if (msg.mediaType && msg.mediaType.startsWith('image/')) {
+                                  const isImageType = !!msg.mediaType && msg.mediaType.startsWith('image/');
+                                  const isSticker = msg.mediaType === 'sticker';
+                                  const isImageExtension = /\.(png|jpe?g|gif|webp)$/i.test(src);
+                                  if (isImageType || isSticker || isImageExtension) {
                                     return <img src={src} alt="imagem" className="max-w-full rounded mb-2" />;
                                   }
                                   if (msg.mediaType && msg.mediaType.startsWith('video/')) {
@@ -1176,7 +1477,7 @@ export default function LeadDetail() {
                                 })()
                               )}
                               {msg.text && (
-                                <div className="whitespace-pre-wrap">{msg.text}</div>
+                                <div className="whitespace-pre-wrap">{renderMessageText(msg.text)}</div>
                               )}
                               <div className="text-[10px] text-gray-500 mt-1">
                                 {new Date(msg.at).toLocaleString('pt-BR')}
@@ -1282,6 +1583,9 @@ export default function LeadDetail() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm"
                     placeholder="Digite a mensagem que será enviada..."
                   />
+                  <p className="mt-2 text-xs text-gray-500">
+                    Tags: {'{Nome}'}, {'{Email}'}, {'{Telefone}'}, {'{Cidade}'}, {'{Interesse}'}, {'{Empresa}'}
+                  </p>
                 </div>
               </div>
               <div className="mt-6 flex items-center justify-end gap-2">

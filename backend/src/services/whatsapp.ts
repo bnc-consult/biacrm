@@ -112,6 +112,20 @@ const isSameLead = (storedPhone: string, leadPhone: string) => {
   return false;
 };
 
+const isPhoneBlockedByWhitelist = async (userId: string, digits: string, companyId: number | null) => {
+  try {
+    if (!companyId) {
+      return false;
+    }
+    const result = await query('SELECT phone FROM lead_whitelist WHERE company_id = $1', [companyId]);
+    const rows = result.rows || [];
+    return rows.some((row: any) => isSameLead(row.phone || '', digits));
+  } catch (error) {
+    console.warn('WhatsApp whitelist check failed:', error);
+    return false;
+  }
+};
+
 const getMessageTimestampMs = (message: any) => {
   const raw = message?.messageTimestamp ?? message?.message?.messageTimestamp;
   if (!raw) return null;
@@ -216,19 +230,35 @@ const ensureLeadForIncomingMessage = async (userId: string, phone: string, leadN
       return;
     }
 
+    let companyId: number | null = null;
+    try {
+      const userResult = await query('SELECT company_id FROM users WHERE id = $1', [Number(userId)]);
+      companyId = userResult.rows[0]?.company_id ? Number(userResult.rows[0].company_id) : null;
+    } catch (error) {
+      companyId = null;
+    }
+    const isBlocked = await isPhoneBlockedByWhitelist(userId, digits, companyId);
+    if (isBlocked) {
+      console.info('WhatsApp lead creation blocked by whitelist', {
+        userId: Number(userId),
+        phone: digits
+      });
+      return;
+    }
     const name = leadName && leadName.trim().length > 0
       ? leadName.trim()
       : `WhatsApp ${digits}`;
     const storedPhone = formatSendPhone(digits);
     const result = await query(
-      `INSERT INTO leads (name, phone, status, origin, user_id, custom_data, tags)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      `INSERT INTO leads (name, phone, status, origin, user_id, company_id, custom_data, tags)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         name,
         storedPhone,
         'novo_lead',
         'whatsapp',
         Number(userId),
+        companyId,
         JSON.stringify({}),
         JSON.stringify([])
       ]
@@ -259,6 +289,7 @@ const getExtensionFromMime = (mimetype?: string | null) => {
   if (mimetype === 'image/jpeg') return 'jpg';
   if (mimetype === 'image/png') return 'png';
   if (mimetype === 'image/gif') return 'gif';
+  if (mimetype === 'image/webp') return 'webp';
   if (mimetype === 'video/mp4') return 'mp4';
   if (mimetype === 'audio/mpeg') return 'mp3';
   if (mimetype === 'audio/ogg') return 'ogg';
@@ -593,6 +624,7 @@ const createSession = async (userId: string) => {
     if (content?.videoMessage) return '[video]';
     if (content?.audioMessage) return '[audio]';
     if (content?.documentMessage) return '[documento]';
+    if (content?.stickerMessage) return '[figurinha]';
     return '[mensagem]';
   };
 
@@ -601,6 +633,7 @@ const createSession = async (userId: string) => {
     if (content?.videoMessage) return { payload: content.videoMessage, type: 'video' };
     if (content?.audioMessage) return { payload: content.audioMessage, type: 'audio' };
     if (content?.documentMessage) return { payload: content.documentMessage, type: 'document' };
+    if (content?.stickerMessage) return { payload: content.stickerMessage, type: 'sticker' };
     return null;
   };
 
@@ -743,7 +776,8 @@ const createSession = async (userId: string) => {
       try {
         const buffer = await downloadMediaMessage(message, 'buffer', {});
         const mimetype = media.payload?.mimetype || null;
-        const extension = getExtensionFromMime(mimetype);
+        const normalizedMimetype = mimetype || (media.type === 'sticker' ? 'image/webp' : null);
+        const extension = getExtensionFromMime(normalizedMimetype);
         const userDir = path.join(MEDIA_DIR, userId);
         ensureDir(MEDIA_DIR);
         ensureDir(userDir);
@@ -751,7 +785,7 @@ const createSession = async (userId: string) => {
         const filePath = path.join(userDir, fileName);
         fs.writeFileSync(filePath, buffer as Buffer);
         mediaUrl = `/media/whatsapp/${userId}/${fileName}`;
-        mediaType = mimetype || media.type;
+        mediaType = normalizedMimetype || media.type;
       } catch (error) {
         console.warn('WhatsApp media download failed:', error);
       }

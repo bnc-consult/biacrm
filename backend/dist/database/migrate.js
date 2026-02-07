@@ -80,6 +80,7 @@ const createTables = async () => {
           )),
           origin TEXT DEFAULT 'manual',
           user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
           custom_data TEXT DEFAULT '{}',
           tags TEXT DEFAULT '[]',
           notes TEXT,
@@ -94,6 +95,57 @@ const createTables = async () => {
             catch (error) {
                 // Column already exists
             }
+            try {
+                connection_1.db.exec(`ALTER TABLE leads ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL`);
+            }
+            catch (error) {
+                // Column already exists
+            }
+            try {
+                connection_1.db.exec(`ALTER TABLE leads ADD COLUMN funnel_id INTEGER REFERENCES funnels(id) ON DELETE SET NULL`);
+            }
+            catch (error) {
+                // Column already exists
+            }
+            try {
+                connection_1.db.exec(`
+          UPDATE leads
+          SET company_id = (
+            SELECT company_id FROM users WHERE users.id = leads.user_id
+          )
+          WHERE company_id IS NULL AND user_id IS NOT NULL
+        `);
+            }
+            catch (error) {
+                // Best-effort backfill
+            }
+            // Lead whitelist table
+            connection_1.db.exec(`
+        CREATE TABLE IF NOT EXISTS lead_whitelist (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          name TEXT,
+          phone TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_lead_whitelist_company ON lead_whitelist(company_id)`);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_lead_whitelist_user ON lead_whitelist(user_id)`);
+            connection_1.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_lead_whitelist_company_phone ON lead_whitelist(company_id, phone)`);
+            connection_1.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_lead_whitelist_user_phone ON lead_whitelist(user_id, phone)`);
+            connection_1.db.exec(`
+        CREATE TABLE IF NOT EXISTS funnels (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          status_order TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_funnels_company ON funnels(company_id)`);
             // Lead history table
             connection_1.db.exec(`
         CREATE TABLE IF NOT EXISTS lead_history (
@@ -111,6 +163,7 @@ const createTables = async () => {
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)`);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_leads_user_id ON leads(user_id)`);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at)`);
+            connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_leads_funnel_id ON leads(funnel_id)`);
             connection_1.db.exec(`CREATE INDEX IF NOT EXISTS idx_lead_history_lead_id ON lead_history(lead_id)`);
             connection_1.db.exec(`
         CREATE TABLE IF NOT EXISTS openai_integrations (
@@ -235,6 +288,7 @@ const createTables = async () => {
           )),
           origin VARCHAR(100) DEFAULT 'manual',
           user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
           custom_data JSONB DEFAULT '{}',
           tags TEXT[] DEFAULT '{}',
           notes TEXT,
@@ -249,6 +303,55 @@ const createTables = async () => {
             catch (error) {
                 // Column already exists or table not created yet
             }
+            try {
+                await connection_1.pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL`);
+            }
+            catch (error) {
+                // Column already exists or table not created yet
+            }
+            try {
+                await connection_1.pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS funnel_id INTEGER REFERENCES funnels(id) ON DELETE SET NULL`);
+            }
+            catch (error) {
+                // Column already exists or table not created yet
+            }
+            try {
+                await connection_1.pool.query(`
+          UPDATE leads
+          SET company_id = users.company_id
+          FROM users
+          WHERE leads.company_id IS NULL AND leads.user_id = users.id
+        `);
+            }
+            catch (error) {
+                // Best-effort backfill
+            }
+            await connection_1.pool.query(`
+        CREATE TABLE IF NOT EXISTS lead_whitelist (
+          id SERIAL PRIMARY KEY,
+          company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          name VARCHAR(255),
+          phone VARCHAR(50) NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_lead_whitelist_company ON lead_whitelist(company_id)`);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_lead_whitelist_user ON lead_whitelist(user_id)`);
+            await connection_1.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_lead_whitelist_company_phone ON lead_whitelist(company_id, phone)`);
+            await connection_1.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_lead_whitelist_user_phone ON lead_whitelist(user_id, phone)`);
+            await connection_1.pool.query(`
+        CREATE TABLE IF NOT EXISTS funnels (
+          id SERIAL PRIMARY KEY,
+          company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+          name VARCHAR(255) NOT NULL,
+          status_order JSONB,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_funnels_company ON funnels(company_id)`);
             // Lead history table
             await connection_1.pool.query(`
         CREATE TABLE IF NOT EXISTS lead_history (
@@ -266,6 +369,7 @@ const createTables = async () => {
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)`);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_user_id ON leads(user_id)`);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at)`);
+            await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_funnel_id ON leads(funnel_id)`);
             await connection_1.pool.query(`CREATE INDEX IF NOT EXISTS idx_lead_history_lead_id ON lead_history(lead_id)`);
             await connection_1.pool.query(`
         CREATE TABLE IF NOT EXISTS openai_integrations (

@@ -1,5 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FiEdit2, FiPlus, FiX, FiChevronDown, FiHelpCircle } from 'react-icons/fi';
+import { useSearchParams } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import api from '../services/api';
 import {
   DndContext,
   closestCenter,
@@ -29,6 +32,12 @@ interface FunnelStage {
   autoDestination: boolean;
 }
 
+interface FunnelItem {
+  id: number;
+  name: string;
+  statusOrder?: string[];
+}
+
 // Mapeamento entre nomes das etapas e IDs de status usados no LeadsAndamento
 const stageNameToStatusId: Record<string, string> = {
   'Sem Atendimento': 'novo_lead',
@@ -48,6 +57,34 @@ const defaultStages: FunnelStage[] = [
   { id: '5', name: 'Proposta', color: '#f97316', order: 5, showInFunnel: true, requiredFields: [], importantFields: [], autoDestination: false },
   { id: '6', name: 'Venda Ganha', color: '#22c55e', order: 6, showInFunnel: true, requiredFields: [], importantFields: [], autoDestination: false },
 ];
+
+const getStagesByOrder = (order?: string[]) => {
+  if (!order || order.length === 0) {
+    return defaultStages;
+  }
+  const statusToStage = new Map<string, FunnelStage>();
+  defaultStages.forEach(stage => {
+    const statusId = stageNameToStatusId[stage.name];
+    if (statusId) {
+      statusToStage.set(statusId, stage);
+    }
+  });
+  const ordered: FunnelStage[] = [];
+  const added = new Set<string>();
+  order.forEach(statusId => {
+    const stage = statusToStage.get(statusId);
+    if (stage) {
+      ordered.push(stage);
+      added.add(stage.id);
+    }
+  });
+  defaultStages.forEach(stage => {
+    if (!added.has(stage.id)) {
+      ordered.push(stage);
+    }
+  });
+  return ordered.map((stage, index) => ({ ...stage, order: index + 1 }));
+};
 
 function SortableStageItem({ stage, index, onEdit, totalStages }: { stage: FunnelStage; index: number; onEdit: (id: string) => void; totalStages: number }) {
   const {
@@ -108,37 +145,14 @@ function SortableStageItem({ stage, index, onEdit, totalStages }: { stage: Funne
 }
 
 export default function FunnelConfig() {
-  // Carregar ordem salva do localStorage ou usar default
-  const loadStages = (): FunnelStage[] => {
-    const saved = localStorage.getItem('funnelStagesOrder');
-    if (saved) {
-      try {
-        const savedStages = JSON.parse(saved);
-        // Garantir que todos os stages default estão presentes
-        const stageMap = new Map(savedStages.map((s: FunnelStage) => [s.name, s]));
-        return defaultStages.map(defaultStage => {
-          const saved = stageMap.get(defaultStage.name);
-          return saved ? { ...defaultStage, ...saved } : defaultStage;
-        }).sort((a, b) => a.order - b.order);
-      } catch (e) {
-        console.error('Error loading saved stages:', e);
-      }
-    }
-    return defaultStages;
-  };
-
-  const [stages, setStages] = useState<FunnelStage[]>(() => {
-    const loaded = loadStages();
-    // Salvar ordem inicial se não existir
-    if (!localStorage.getItem('funnelStatusOrder')) {
-      const statusOrder = loaded
-        .map(stage => stageNameToStatusId[stage.name])
-        .filter(Boolean);
-      localStorage.setItem('funnelStatusOrder', JSON.stringify(statusOrder));
-      localStorage.setItem('funnelStagesOrder', JSON.stringify(loaded));
-    }
-    return loaded;
-  });
+  const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [funnels, setFunnels] = useState<FunnelItem[]>([]);
+  const [activeFunnel, setActiveFunnel] = useState<FunnelItem | null>(null);
+  const [loadingFunnels, setLoadingFunnels] = useState(true);
+  const [funnelsError, setFunnelsError] = useState('');
+  const [creatingFunnel, setCreatingFunnel] = useState(false);
+  const [stages, setStages] = useState<FunnelStage[]>(defaultStages);
   const [editingStage, setEditingStage] = useState<FunnelStage | null>(null);
   const [editForm, setEditForm] = useState({
     title: '',
@@ -156,6 +170,63 @@ export default function FunnelConfig() {
     })
   );
 
+  useEffect(() => {
+    const fetchFunnels = async () => {
+      setLoadingFunnels(true);
+      setFunnelsError('');
+      try {
+        const response = await api.get('/funnels');
+        const list = Array.isArray(response.data) ? response.data : [];
+        setFunnels(list);
+        const paramId = Number(searchParams.get('funnelId'));
+        const selected = paramId
+          ? list.find((item: FunnelItem) => Number(item.id) === paramId)
+          : list[0];
+        if (selected) {
+          setActiveFunnel(selected);
+          setStages(getStagesByOrder(selected.statusOrder));
+          if (!paramId) {
+            setSearchParams({ funnelId: String(selected.id) });
+          }
+        } else {
+          setActiveFunnel(null);
+          setStages(defaultStages);
+        }
+      } catch (error) {
+        setFunnels([]);
+        setActiveFunnel(null);
+        setStages(defaultStages);
+        const message = (error as any)?.response?.data?.message || 'Erro ao carregar funis.';
+        setFunnelsError(message);
+      } finally {
+        setLoadingFunnels(false);
+      }
+    };
+    fetchFunnels();
+  }, [searchParams, setSearchParams]);
+
+  const handleCreateDefaultFunnel = async () => {
+    setCreatingFunnel(true);
+    setFunnelsError('');
+    try {
+      await api.post('/funnels');
+      const response = await api.get('/funnels');
+      const list = Array.isArray(response.data) ? response.data : [];
+      setFunnels(list);
+      const selected = list[0];
+      if (selected) {
+        setActiveFunnel(selected);
+        setStages(getStagesByOrder(selected.statusOrder));
+        setSearchParams({ funnelId: String(selected.id) });
+      }
+    } catch (error) {
+      const message = (error as any)?.response?.data?.message || 'Erro ao criar funil.';
+      setFunnelsError(message);
+    } finally {
+      setCreatingFunnel(false);
+    }
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
 
@@ -170,18 +241,19 @@ export default function FunnelConfig() {
           ...item,
           order: index + 1,
         }));
-        
-        // Salvar ordem no localStorage
-        localStorage.setItem('funnelStagesOrder', JSON.stringify(updatedItems));
-        
-        // Salvar ordem de status IDs para uso no LeadsAndamento
+
         const statusOrder = updatedItems
           .map(stage => stageNameToStatusId[stage.name])
-          .filter(Boolean); // Remove undefined values
-        localStorage.setItem('funnelStatusOrder', JSON.stringify(statusOrder));
-        
-        // Disparar evento customizado para atualizar outras páginas na mesma aba
-        window.dispatchEvent(new Event('funnelOrderChanged'));
+          .filter(Boolean);
+        if (activeFunnel) {
+          api.put(`/funnels/${activeFunnel.id}`, { statusOrder })
+            .then(() => {
+              window.dispatchEvent(new Event('funnelOrderChanged'));
+            })
+            .catch(() => {
+              // no-op: manter ordem local mesmo se falhar
+            });
+        }
         
         return updatedItems;
       });
@@ -245,16 +317,19 @@ export default function FunnelConfig() {
           : stage
       );
       setStages(updatedStages);
-      
-      // Salvar ordem atualizada
-      localStorage.setItem('funnelStagesOrder', JSON.stringify(updatedStages));
+
       const statusOrder = updatedStages
         .map(stage => stageNameToStatusId[stage.name])
         .filter(Boolean);
-      localStorage.setItem('funnelStatusOrder', JSON.stringify(statusOrder));
-      
-      // Disparar evento customizado para atualizar outras páginas na mesma aba
-      window.dispatchEvent(new Event('funnelOrderChanged'));
+      if (activeFunnel) {
+        api.put(`/funnels/${activeFunnel.id}`, { statusOrder })
+          .then(() => {
+            window.dispatchEvent(new Event('funnelOrderChanged'));
+          })
+          .catch(() => {
+            // no-op
+          });
+      }
       
       handleCloseModal();
     }
@@ -285,11 +360,40 @@ export default function FunnelConfig() {
   return (
     <div className="p-8 bg-gray-50 min-h-full">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Dashboard e funil</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">
+          {activeFunnel ? `Configurar ${activeFunnel.name}` : 'Configurar funil'}
+        </h1>
         <p className="text-sm text-gray-600">
           Configure cada etapa do funil separadamente clicando na etapa.
         </p>
       </div>
+
+      {loadingFunnels && (
+        <div className="text-sm text-gray-500 mb-4">Carregando funis...</div>
+      )}
+
+      {!loadingFunnels && !activeFunnel && (
+        <div className="mb-4 space-y-3">
+          <div className="text-sm text-red-600">
+            {funnelsError || 'Nenhum funil encontrado para a empresa.'}
+          </div>
+          {funnelsError.toLowerCase().includes('empresa não vinculada') && (
+            <div className="text-xs text-red-500">
+              Vincule o usuário a uma empresa para configurar funis.
+            </div>
+          )}
+          {user?.role === 'admin' && !funnelsError.toLowerCase().includes('empresa não vinculada') && (
+            <button
+              onClick={handleCreateDefaultFunnel}
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
+              disabled={creatingFunnel}
+            >
+              <FiPlus className="w-4 h-4" />
+              {creatingFunnel ? 'Criando...' : 'Criar Funil 1'}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Funnel Stages List */}
       <div className="bg-white rounded-lg shadow-md p-6 max-h-[calc(100vh-250px)] overflow-y-auto">

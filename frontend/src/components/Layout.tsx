@@ -23,11 +23,15 @@ import {
   FiRepeat,
   FiVolumeX,
   FiTrash2,
+  FiShield,
   FiRefreshCw,
+  FiX,
   FiInfo,
   FiLogOut,
   FiUser,
   FiUserPlus,
+  FiPlus,
+  FiEdit2,
   FiMessageCircle,
   FiCpu
 } from 'react-icons/fi';
@@ -55,11 +59,29 @@ interface Collaborator {
   created_at?: string;
 }
 
+interface WhiteListItem {
+  id: number;
+  name?: string | null;
+  phone: string;
+}
+
+interface FunnelItem {
+  id: number;
+  name: string;
+  statusOrder?: string[];
+}
+
 type MenuSubItem = {
   path?: string;
   icon: IconType;
   label: string;
   onClick?: () => void;
+  onAction?: () => void;
+  actionIcon?: IconType;
+  actionTitle?: string;
+  onSecondaryAction?: () => void;
+  secondaryActionIcon?: IconType;
+  secondaryActionTitle?: string;
 };
 
 type MenuItem = {
@@ -95,6 +117,7 @@ export default function Layout() {
   const [showConversationsModal, setShowConversationsModal] = useState(false);
   const [conversationsOpen, setConversationsOpen] = useState(false);
   const conversationsCloseTimer = useRef<number | null>(null);
+  const whitelistCloseTimer = useRef<number | null>(null);
   const [activeConversationTab, setActiveConversationTab] = useState<'unread' | 'all'>('unread');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
@@ -112,6 +135,29 @@ export default function Layout() {
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [collaboratorIndex, setCollaboratorIndex] = useState(0);
   const [isCreateMode, setIsCreateMode] = useState(true);
+  const [showWhitelistModal, setShowWhitelistModal] = useState(false);
+  const [whitelistOpen, setWhitelistOpen] = useState(false);
+  const [whitelistName, setWhitelistName] = useState('');
+  const [whitelistPhone, setWhitelistPhone] = useState('');
+  const [whitelistItems, setWhitelistItems] = useState<WhiteListItem[]>([]);
+  const [whitelistError, setWhitelistError] = useState('');
+  const [whitelistSuccess, setWhitelistSuccess] = useState('');
+  const [whitelistLoading, setWhitelistLoading] = useState(false);
+  const [whitelistFetching, setWhitelistFetching] = useState(false);
+  const [whitelistDeletingId, setWhitelistDeletingId] = useState<number | null>(null);
+  const [funnels, setFunnels] = useState<FunnelItem[]>([]);
+  const [funnelsLoading, setFunnelsLoading] = useState(false);
+  const [funnelsError, setFunnelsError] = useState('');
+  const [showRenameFunnelModal, setShowRenameFunnelModal] = useState(false);
+  const [renameFunnelId, setRenameFunnelId] = useState<number | null>(null);
+  const [renameFunnelName, setRenameFunnelName] = useState('');
+  const [renameFunnelError, setRenameFunnelError] = useState('');
+  const [renameFunnelLoading, setRenameFunnelLoading] = useState(false);
+  const [showDeleteFunnelModal, setShowDeleteFunnelModal] = useState(false);
+  const [deleteFunnelId, setDeleteFunnelId] = useState<number | null>(null);
+  const [deleteFunnelName, setDeleteFunnelName] = useState('');
+  const [deleteFunnelError, setDeleteFunnelError] = useState('');
+  const [deleteFunnelLoading, setDeleteFunnelLoading] = useState(false);
 
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
@@ -519,6 +565,163 @@ export default function Layout() {
     resetCollaboratorForm();
   };
 
+  const fetchFunnels = async () => {
+    setFunnelsLoading(true);
+    try {
+      const response = await api.get('/funnels');
+      setFunnels(Array.isArray(response.data) ? response.data : []);
+      setFunnelsError('');
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao carregar funis.';
+      setFunnelsError(message);
+      setFunnels([]);
+    } finally {
+      setFunnelsLoading(false);
+    }
+  };
+
+  const handleCreateFunnel = async () => {
+    try {
+      const response = await api.post('/funnels');
+      const created = response.data;
+      await fetchFunnels();
+      if (created?.id) {
+        navigate(`/leads/andamento/${created.id}`);
+      }
+      setLeadsMenuOpen(true);
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao criar funil.';
+      setFunnelsError(message);
+    }
+  };
+
+  const handleOpenRenameFunnel = (funnel: FunnelItem) => {
+    setRenameFunnelId(funnel.id);
+    setRenameFunnelName(funnel.name || '');
+    setRenameFunnelError('');
+    setShowRenameFunnelModal(true);
+  };
+
+  const handleRenameFunnel = async () => {
+    if (!renameFunnelId) return;
+    const nextName = renameFunnelName.trim();
+    if (!nextName) {
+      setRenameFunnelError('Informe o nome do funil.');
+      return;
+    }
+    setRenameFunnelLoading(true);
+    setRenameFunnelError('');
+    try {
+      await api.put(`/funnels/${renameFunnelId}`, { name: nextName });
+      await fetchFunnels();
+      setShowRenameFunnelModal(false);
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao renomear funil.';
+      setRenameFunnelError(message);
+    } finally {
+      setRenameFunnelLoading(false);
+    }
+  };
+
+  const handleOpenDeleteFunnel = (funnel: FunnelItem) => {
+    setDeleteFunnelId(funnel.id);
+    setDeleteFunnelName(funnel.name || '');
+    setDeleteFunnelError('');
+    setShowDeleteFunnelModal(true);
+  };
+
+  const handleDeleteFunnel = async () => {
+    if (!deleteFunnelId) return;
+    setDeleteFunnelLoading(true);
+    setDeleteFunnelError('');
+    try {
+      await api.delete(`/funnels/${deleteFunnelId}`);
+      await fetchFunnels();
+      setShowDeleteFunnelModal(false);
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao excluir funil.';
+      setDeleteFunnelError(message);
+    } finally {
+      setDeleteFunnelLoading(false);
+    }
+  };
+
+  const handleOpenWhitelist = () => {
+    if (whitelistCloseTimer.current) {
+      window.clearTimeout(whitelistCloseTimer.current);
+      whitelistCloseTimer.current = null;
+    }
+    setWhitelistError('');
+    setWhitelistSuccess('');
+    setShowWhitelistModal(true);
+    requestAnimationFrame(() => setWhitelistOpen(true));
+  };
+
+  const handleCloseWhitelist = () => {
+    setWhitelistOpen(false);
+    whitelistCloseTimer.current = window.setTimeout(() => {
+      setShowWhitelistModal(false);
+      whitelistCloseTimer.current = null;
+    }, 250);
+  };
+
+  const fetchWhitelist = async () => {
+    setWhitelistFetching(true);
+    try {
+      const response = await api.get('/leads/whitelist');
+      setWhitelistItems(Array.isArray(response.data) ? response.data : []);
+      setWhitelistError('');
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao carregar white list.';
+      setWhitelistError(message);
+    } finally {
+      setWhitelistFetching(false);
+    }
+  };
+
+  const handleCreateWhitelist = async () => {
+    const phoneDigits = whitelistPhone.replace(/\D/g, '');
+    if (!phoneDigits) {
+      setWhitelistError('Informe um número de celular válido.');
+      return;
+    }
+    setWhitelistLoading(true);
+    setWhitelistError('');
+    setWhitelistSuccess('');
+    try {
+      await api.post('/leads/whitelist', {
+        phone: phoneDigits,
+        name: whitelistName.trim() || null
+      });
+      setWhitelistName('');
+      setWhitelistPhone('');
+      setWhitelistSuccess('Número adicionado à white list.');
+      await fetchWhitelist();
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao salvar número.';
+      setWhitelistError(message);
+    } finally {
+      setWhitelistLoading(false);
+    }
+  };
+
+  const handleDeleteWhitelist = async (itemId: number) => {
+    if (!window.confirm('Deseja remover este número da white list?')) return;
+    setWhitelistDeletingId(itemId);
+    setWhitelistError('');
+    setWhitelistSuccess('');
+    try {
+      await api.delete(`/leads/whitelist/${itemId}`);
+      setWhitelistSuccess('Número removido da white list.');
+      await fetchWhitelist();
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.message || 'Erro ao remover número.';
+      setWhitelistError(message);
+    } finally {
+      setWhitelistDeletingId(null);
+    }
+  };
+
   useEffect(() => {
     if (!showCollaboratorModal) return;
     if (!isCreateMode && collaborators.length > 0) {
@@ -531,9 +734,41 @@ export default function Layout() {
     }
   }, [collaborators, collaboratorIndex, isCreateMode, showCollaboratorModal]);
 
+  useEffect(() => {
+    if (showWhitelistModal) {
+      fetchWhitelist();
+    }
+  }, [showWhitelistModal]);
+
+  useEffect(() => {
+    if (user) {
+      fetchFunnels();
+    }
+  }, [user]);
+
+  const funnelSubItems: MenuSubItem[] = funnels.length
+    ? funnels.map((funnel) => ({
+        path: `/leads/andamento/${funnel.id}`,
+        icon: FiBarChart2,
+        label: funnel.name || 'Funil',
+        onAction: user?.role === 'admin' ? () => handleOpenRenameFunnel(funnel) : undefined,
+        actionIcon: user?.role === 'admin' ? FiEdit2 : undefined,
+        actionTitle: user?.role === 'admin' ? 'Renomear funil' : undefined,
+        onSecondaryAction: user?.role === 'admin' ? () => handleOpenDeleteFunnel(funnel) : undefined,
+        secondaryActionIcon: user?.role === 'admin' ? FiTrash2 : undefined,
+        secondaryActionTitle: user?.role === 'admin' ? 'Excluir funil' : undefined,
+      }))
+    : [{ path: '/leads/andamento', icon: FiBarChart2, label: 'Funil 1' }];
+
   const leadsSubItems: MenuSubItem[] = [
     { path: '/leads', icon: FiList, label: 'Listagem' },
-    { path: '/leads/andamento', icon: FiBarChart2, label: 'Andamento' },
+    ...funnelSubItems,
+    ...(user?.role === 'admin'
+      ? [{ icon: FiPlus, label: 'Adicionar funil', onClick: handleCreateFunnel }]
+      : []),
+    ...(user?.role === 'admin'
+      ? [{ icon: FiShield, label: 'White List', onClick: handleOpenWhitelist }]
+      : []),
   ];
 
   const integrationsSubItems: MenuSubItem[] = [
@@ -652,7 +887,7 @@ export default function Layout() {
                       ? 'bg-gray-200 text-gray-900'
                       : 'text-gray-700 hover:bg-gray-200'
                   }`}
-                  title={!sidebarOpen ? item.label : ''}
+                  title={item.label}
                 >
                   <div className={`flex items-center ${sidebarOpen ? 'space-x-3' : ''}`}>
                     <Icon className="w-5 h-5" />
@@ -669,33 +904,57 @@ export default function Layout() {
                     {item.subItems.map((subItem) => {
                       const SubIcon = subItem.icon;
                       const isSubActive = subItem.path ? location.pathname === subItem.path : false;
+                      const ActionIcon = subItem.actionIcon;
+                      const SecondaryActionIcon = subItem.secondaryActionIcon;
                       
                       return (
-                        <button
-                          key={subItem.path || subItem.label}
-                          onClick={() => {
-                            if (subItem.onClick) {
-                              subItem.onClick();
-                              return;
-                            }
-                            if (subItem.path) {
-                              navigate(subItem.path);
-                            }
-                          }}
-                          className={`w-full flex items-center justify-start text-left gap-3 px-4 py-2 rounded-lg transition-colors whitespace-nowrap overflow-hidden ${
-                            isSubActive
-                              ? 'bg-blue-50 text-blue-600 border-l-4 border-blue-600'
-                              : 'text-gray-600 hover:bg-gray-100'
-                          }`}
-                        >
-                          <SubIcon className="w-4 h-4" />
-                          <span
-                            className="text-sm font-medium text-left flex-1 min-w-0"
-                            style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                        <div key={subItem.path || subItem.label} className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              if (subItem.onClick) {
+                                subItem.onClick();
+                                return;
+                              }
+                              if (subItem.path) {
+                                navigate(subItem.path);
+                              }
+                            }}
+                            className={`flex-1 flex items-center justify-start text-left gap-3 px-4 py-2 rounded-lg transition-colors whitespace-nowrap overflow-hidden ${
+                              isSubActive
+                                ? 'bg-blue-50 text-blue-600 border-l-4 border-blue-600'
+                                : 'text-gray-600 hover:bg-gray-100'
+                            }`}
+                            title={subItem.label}
                           >
-                            {subItem.label}
-                          </span>
-                        </button>
+                            <SubIcon className="w-4 h-4" />
+                            <span
+                              className="text-sm font-medium text-left flex-1 min-w-0"
+                              style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                            >
+                              {subItem.label}
+                            </span>
+                          </button>
+                          {subItem.onAction && ActionIcon && (
+                            <button
+                              type="button"
+                              onClick={subItem.onAction}
+                              className="p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                              title={subItem.actionTitle || 'Ação'}
+                            >
+                              <ActionIcon className="w-4 h-4" />
+                            </button>
+                          )}
+                          {subItem.onSecondaryAction && SecondaryActionIcon && (
+                            <button
+                              type="button"
+                              onClick={subItem.onSecondaryAction}
+                              className="p-2 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50"
+                              title={subItem.secondaryActionTitle || 'Excluir'}
+                            >
+                              <SecondaryActionIcon className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -1250,6 +1509,243 @@ export default function Layout() {
                 disabled={collaboratorLoading || !isCreateMode || isLimitReached}
               >
                 {collaboratorAction === 'create' ? 'Salvando...' : 'Cadastrar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showWhitelistModal && (
+        <div
+          className="fixed inset-y-0 right-0 z-50"
+          style={{ left: sidebarOpen ? '16rem' : '4rem' }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              handleCloseWhitelist();
+            }
+          }}
+        >
+          <div
+            className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${
+              whitelistOpen ? 'opacity-100' : 'opacity-0'
+            }`}
+          />
+          <div
+            className={`absolute left-0 top-0 h-full w-full max-w-lg bg-white shadow-xl flex flex-col transform transition-transform duration-300 ease-out ${
+              whitelistOpen ? 'translate-x-0' : '-translate-x-8'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 p-4 border-b border-gray-200">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">White List</h3>
+                <p className="text-xs text-gray-500">
+                  Números cadastrados aqui não geram leads automaticamente.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseWhitelist}
+                className="text-gray-500 hover:text-gray-700"
+                title="Fechar"
+              >
+                <FiX className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Nome do lead (opcional)</label>
+                  <input
+                    type="text"
+                    value={whitelistName}
+                    onChange={(e) => setWhitelistName(e.target.value)}
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Número de celular</label>
+                  <input
+                    type="text"
+                    value={whitelistPhone}
+                    onChange={(e) => setWhitelistPhone(e.target.value)}
+                    placeholder="(11) 99999-9999"
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                  />
+                </div>
+              </div>
+
+              {whitelistError && (
+                <div className="mt-3 text-sm text-red-600">
+                  {whitelistError}
+                  {whitelistError.toLowerCase().includes('empresa não vinculada') && (
+                    <div className="text-xs text-red-500 mt-1">
+                      Vincule o usuário a uma empresa para usar a white list.
+                    </div>
+                  )}
+                </div>
+              )}
+              {whitelistSuccess && <div className="mt-3 text-sm text-green-600">{whitelistSuccess}</div>}
+
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleCloseWhitelist}
+                  className="text-sm text-gray-500 hover:text-gray-700"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateWhitelist}
+                  className="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-60"
+                  disabled={whitelistLoading}
+                >
+                  {whitelistLoading ? 'Salvando...' : 'Adicionar'}
+                </button>
+              </div>
+
+              <div className="mt-6">
+                <h4 className="text-sm font-semibold text-gray-900 mb-2">Números cadastrados</h4>
+                {whitelistFetching ? (
+                  <div className="text-sm text-gray-500">Carregando...</div>
+                ) : whitelistItems.length === 0 ? (
+                  <div className="text-sm text-gray-500">Nenhum número cadastrado.</div>
+                ) : (
+                  <div className="space-y-2 max-h-56 overflow-y-auto">
+                    {whitelistItems.map((item) => (
+                      <div key={item.id} className="flex items-center justify-between gap-3 rounded-md border border-gray-200 px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-gray-900 truncate">
+                            {item.name ? item.name : 'Sem nome'}
+                          </div>
+                          <div className="text-xs text-gray-500">{item.phone}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteWhitelist(item.id)}
+                          disabled={whitelistDeletingId === item.id}
+                          className="text-red-600 hover:text-red-700 disabled:opacity-60"
+                          title="Remover"
+                        >
+                          <FiTrash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRenameFunnelModal && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowRenameFunnelModal(false);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-gray-900">Renomear funil</h3>
+              <button
+                type="button"
+                onClick={() => setShowRenameFunnelModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+                title="Fechar"
+              >
+                <FiX className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700">Nome do funil</label>
+              <input
+                type="text"
+                value={renameFunnelName}
+                onChange={(e) => setRenameFunnelName(e.target.value)}
+                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+              />
+              {renameFunnelError && (
+                <div className="mt-2 text-sm text-red-600">{renameFunnelError}</div>
+              )}
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowRenameFunnelModal(false)}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleRenameFunnel}
+                className="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-60"
+                disabled={renameFunnelLoading}
+              >
+                {renameFunnelLoading ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteFunnelModal && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowDeleteFunnelModal(false);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-gray-900">Excluir funil</h3>
+              <button
+                type="button"
+                onClick={() => setShowDeleteFunnelModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+                title="Fechar"
+              >
+                <FiX className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mt-4 text-sm text-gray-700">
+              Deseja realmente excluir o funil <strong>{deleteFunnelName || 'selecionado'}</strong> e
+              todos os leads que estão nele?
+            </div>
+            {deleteFunnelError && (
+              <div className="mt-3 text-sm text-red-600">{deleteFunnelError}</div>
+            )}
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteFunnelModal(false)}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteFunnel}
+                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
+                disabled={deleteFunnelLoading}
+              >
+                {deleteFunnelLoading ? 'Excluindo...' : 'Excluir'}
               </button>
             </div>
           </div>
