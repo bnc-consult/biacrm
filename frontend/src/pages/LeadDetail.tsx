@@ -178,6 +178,9 @@ export default function LeadDetail() {
   const manualDetailsInitialRef = useRef({ interest: '', city: '', email: '' });
   const [manualError, setManualError] = useState<string | null>(null);
   const [isSavingManualDetails, setIsSavingManualDetails] = useState(false);
+  const [customFields, setCustomFields] = useState<Array<{ id: string; label: string; value: string }>>([]);
+  const [customFieldsError, setCustomFieldsError] = useState<string | null>(null);
+  const [isSavingCustomFields, setIsSavingCustomFields] = useState(false);
   const [userOptions, setUserOptions] = useState<Array<{ id: number; name: string }>>([]);
   const [responsibleName, setResponsibleName] = useState('');
   const [responsibleError, setResponsibleError] = useState<string | null>(null);
@@ -516,7 +519,89 @@ export default function LeadDetail() {
     };
     setIsManualDetailsDirty(false);
     setResponsibleName(lead.user_name || '');
+    const existingFields = Array.isArray(lead.custom_data?.custom_fields)
+      ? lead.custom_data.custom_fields
+      : [];
+    const normalizedFields = existingFields
+      .filter((field: any) => field)
+      .slice(0, 10)
+      .map((field: any, index: number) => ({
+        id: String(field.id || `${Date.now()}-${index}`),
+        label: String(field.label || ''),
+        value: String(field.value || '')
+      }));
+    setCustomFields(normalizedFields);
   }, [lead]);
+
+  const handleAddCustomField = () => {
+    setCustomFieldsError(null);
+    if (customFields.length >= 10) {
+      setCustomFieldsError('Limite de 10 campos personalizados atingido.');
+      return;
+    }
+    setCustomFields(prev => [
+      ...prev,
+      { id: `${Date.now()}-${prev.length}`, label: '', value: '' }
+    ]);
+  };
+
+  const handleRemoveCustomField = (fieldId: string) => {
+    setCustomFieldsError(null);
+    setCustomFields(prev => prev.filter(field => field.id !== fieldId));
+  };
+
+  const handleUpdateCustomField = (fieldId: string, key: 'label' | 'value', nextValue: string) => {
+    setCustomFieldsError(null);
+    setCustomFields(prev =>
+      prev.map(field => (field.id === fieldId ? { ...field, [key]: nextValue } : field))
+    );
+  };
+
+  const handleSaveCustomFields = async () => {
+    if (!lead) return;
+    setCustomFieldsError(null);
+    const sanitized = customFields
+      .map(field => ({
+        id: field.id,
+        label: field.label.trim(),
+        value: field.value.trim()
+      }))
+      .filter(field => field.label || field.value);
+    if (sanitized.length > 10) {
+      setCustomFieldsError('Limite de 10 campos personalizados atingido.');
+      return;
+    }
+    if (sanitized.some(field => !field.label)) {
+      setCustomFieldsError('Preencha o nome de todos os campos personalizados.');
+      return;
+    }
+    setIsSavingCustomFields(true);
+    try {
+      const updatedCustomData = {
+        ...(lead.custom_data || {}),
+        custom_fields: sanitized
+      };
+      const response = await api.put(`/leads/${lead.id}`, {
+        custom_data: updatedCustomData
+      });
+      const parsedLead = parseLeadData(response.data);
+      setLead(parsedLead);
+      setTimeline(prev => [
+        {
+          id: Date.now(),
+          date: new Date().toISOString(),
+          description: 'Campos personalizados atualizados.',
+          source: 'USUÁRIO',
+        },
+        ...prev
+      ]);
+    } catch (error: any) {
+      console.error('Erro ao salvar campos personalizados:', error);
+      setCustomFieldsError(error.response?.data?.message || 'Erro ao salvar campos personalizados.');
+    } finally {
+      setIsSavingCustomFields(false);
+    }
+  };
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -1126,7 +1211,7 @@ export default function LeadDetail() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Left Column */}
           <div className="lg:col-span-2 space-y-6">
             {/* Detalhes da conversão */}
@@ -1414,6 +1499,78 @@ export default function LeadDetail() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Custom Fields Sidebar */}
+          <div className="space-y-6">
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-gray-900">Campos personalizados</h3>
+                <span className="text-xs text-gray-500">{customFields.length}/10</span>
+              </div>
+              <div className="space-y-3">
+                {customFields.length === 0 && (
+                  <div className="text-xs text-gray-500">
+                    Nenhum campo personalizado adicionado.
+                  </div>
+                )}
+                {customFields.map((field) => (
+                  <div key={field.id} className="space-y-2 border border-gray-200 rounded-lg p-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Nome do campo</label>
+                      <input
+                        type="text"
+                        value={field.label}
+                        onChange={(e) => handleUpdateCustomField(field.id, 'label', e.target.value)}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Ex: Número do imóvel"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Valor</label>
+                      <input
+                        type="text"
+                        value={field.value}
+                        onChange={(e) => handleUpdateCustomField(field.id, 'value', e.target.value)}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Ex: 1234"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCustomField(field.id)}
+                      className="text-xs text-red-600 hover:text-red-700"
+                    >
+                      Remover
+                    </button>
+                  </div>
+                ))}
+                {customFieldsError && (
+                  <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+                    {customFieldsError}
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAddCustomField}
+                    className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-xs"
+                    disabled={customFields.length >= 10}
+                  >
+                    <FiPlus className="w-4 h-4" />
+                    Adicionar campo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveCustomFields}
+                    disabled={isSavingCustomFields}
+                    className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-medium disabled:opacity-50"
+                  >
+                    {isSavingCustomFields ? 'Salvando...' : 'Salvar campos'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

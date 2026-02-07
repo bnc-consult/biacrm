@@ -224,6 +224,10 @@ export default function Leads() {
     createdFrom: '',
     createdTo: '',
   });
+  const [filtersTab, setFiltersTab] = useState<'default' | 'custom'>('default');
+  const [customFieldFilters, setCustomFieldFilters] = useState<
+    Array<{ id: string; label: string; value: string }>
+  >([]);
   const [userOptions, setUserOptions] = useState<Array<{ id: number; name: string }>>([]);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
@@ -850,6 +854,20 @@ export default function Leads() {
       || (lead.email || '').toLowerCase().includes(filters.email.toLowerCase());
     const matchesStatus = !filters.status || displayStatus === filters.status;
     const matchesDate = isWithinDateRange(lead.created_at);
+    const customFields = Array.isArray(lead.custom_data?.custom_fields)
+      ? lead.custom_data.custom_fields
+      : [];
+    const matchesCustomFields = customFieldFilters.every((filter) => {
+      const label = filter.label.trim();
+      const value = filter.value.trim();
+      if (!label && !value) return true;
+      if (!label || !value) return false;
+      const match = customFields.find((field: any) =>
+        String(field?.label || '').trim().toLowerCase() === label.toLowerCase()
+      );
+      if (!match) return false;
+      return String(match?.value || '').toLowerCase().includes(value.toLowerCase());
+    });
 
     return matchesName
       && matchesResponsible
@@ -859,7 +877,8 @@ export default function Leads() {
       && matchesCity
       && matchesEmail
       && matchesStatus
-      && matchesDate;
+      && matchesDate
+      && matchesCustomFields;
   });
   
   const filteredResponsibleOptions = userOptions.filter((user) =>
@@ -1461,9 +1480,12 @@ export default function Leads() {
       {/* Modal de Filtros */}
       {showFiltersModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full">
             <div className="flex items-center justify-between p-6 border-b border-gray-200">
-              <h2 className="text-xl font-bold text-gray-900">Filtros</h2>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Filtros de leads</h2>
+                <p className="text-xs text-gray-500 mt-1">Use as abas para combinar filtros.</p>
+              </div>
               <button
                 onClick={() => setShowFiltersModal(false)}
                 className="text-gray-400 hover:text-gray-600"
@@ -1471,117 +1493,244 @@ export default function Leads() {
                 <FiX className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-1 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
-                  <input
-                    type="text"
-                    value={filters.name}
-                    onChange={(e) => setFilters(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Responsável pelo lead</label>
-                  <input
-                    type="text"
-                    value={filters.responsible}
-                    onChange={(e) => setFilters(prev => ({ ...prev, responsible: e.target.value }))}
-                    list="responsible-options"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <datalist id="responsible-options">
-                    {filteredResponsibleOptions.map((user) => (
-                      <option key={user.id} value={user.name} />
-                    ))}
-                  </datalist>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Telefone</label>
-                  <input
-                    type="text"
-                    value={filters.phone}
-                    onChange={(e) => setFilters(prev => ({ ...prev, phone: e.target.value }))}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Produto</label>
-                  <input
-                    type="text"
-                    value={filters.product}
-                    onChange={(e) => setFilters(prev => ({ ...prev, product: e.target.value }))}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Interesse</label>
-                  <input
-                    type="text"
-                    value={filters.interest}
-                    onChange={(e) => setFilters(prev => ({ ...prev, interest: e.target.value }))}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Cidade</label>
-                  <input
-                    type="text"
-                    value={filters.city}
-                    onChange={(e) => setFilters(prev => ({ ...prev, city: e.target.value }))}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                  <input
-                    type="email"
-                    value={filters.email}
-                    onChange={(e) => setFilters(prev => ({ ...prev, email: e.target.value }))}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                  <select
-                    value={filters.status}
-                    onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Todos</option>
-                    {statusOptions.map((status) => (
-                      <option key={status.id} value={status.id}>
-                        {status.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Criado a partir de</label>
-                    <input
-                      type="date"
-                      value={filters.createdFrom}
-                      onChange={(e) => setFilters(prev => ({ ...prev, createdFrom: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Criado até</label>
-                    <input
-                      type="date"
-                      value={filters.createdTo}
-                      onChange={(e) => setFilters(prev => ({ ...prev, createdTo: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
+            <div className="px-6 pt-4">
+              <div className="flex items-center gap-3 border-b border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => setFiltersTab('default')}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    filtersTab === 'default'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Filtros padrão
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltersTab('custom')}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    filtersTab === 'custom'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Campos personalizados
+                </button>
               </div>
+            </div>
+            <div className="p-6 space-y-4">
+              {filtersTab === 'default' && (
+                <div className="grid grid-cols-1 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+                    <input
+                      type="text"
+                      value={filters.name}
+                      onChange={(e) => setFilters(prev => ({ ...prev, name: e.target.value }))}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Responsável pelo lead</label>
+                    <input
+                      type="text"
+                      value={filters.responsible}
+                      onChange={(e) => setFilters(prev => ({ ...prev, responsible: e.target.value }))}
+                      list="responsible-options"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <datalist id="responsible-options">
+                      {filteredResponsibleOptions.map((user) => (
+                        <option key={user.id} value={user.name} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Telefone</label>
+                    <input
+                      type="text"
+                      value={filters.phone}
+                      onChange={(e) => setFilters(prev => ({ ...prev, phone: e.target.value }))}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Produto</label>
+                    <input
+                      type="text"
+                      value={filters.product}
+                      onChange={(e) => setFilters(prev => ({ ...prev, product: e.target.value }))}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Interesse</label>
+                    <input
+                      type="text"
+                      value={filters.interest}
+                      onChange={(e) => setFilters(prev => ({ ...prev, interest: e.target.value }))}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Cidade</label>
+                    <input
+                      type="text"
+                      value={filters.city}
+                      onChange={(e) => setFilters(prev => ({ ...prev, city: e.target.value }))}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                    <input
+                      type="email"
+                      value={filters.email}
+                      onChange={(e) => setFilters(prev => ({ ...prev, email: e.target.value }))}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                    <select
+                      value={filters.status}
+                      onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Todos</option>
+                      {statusOptions.map((status) => (
+                        <option key={status.id} value={status.id}>
+                          {status.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Criado a partir de</label>
+                      <input
+                        type="date"
+                        value={filters.createdFrom}
+                        onChange={(e) => setFilters(prev => ({ ...prev, createdFrom: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Criado até</label>
+                      <input
+                        type="date"
+                        value={filters.createdTo}
+                        onChange={(e) => setFilters(prev => ({ ...prev, createdTo: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {filtersTab === 'custom' && (
+                <div className="space-y-4">
+                  {(() => {
+                    const customFieldLabels = Array.from(new Set(
+                      leads.flatMap((lead) => {
+                        const fields = Array.isArray(lead.custom_data?.custom_fields)
+                          ? lead.custom_data.custom_fields
+                          : [];
+                        return fields
+                          .map((field: any) => String(field?.label || '').trim())
+                          .filter(Boolean);
+                      })
+                    ));
+
+                    const handleAddCustomFilter = () => {
+                      setCustomFieldFilters((prev) => {
+                        if (prev.length >= 10) return prev;
+                        return [
+                          ...prev,
+                          { id: `${Date.now()}-${prev.length}`, label: '', value: '' }
+                        ];
+                      });
+                    };
+
+                    const handleRemoveCustomFilter = (id: string) => {
+                      setCustomFieldFilters((prev) => prev.filter((item) => item.id !== id));
+                    };
+
+                    const handleUpdateCustomFilter = (id: string, key: 'label' | 'value', value: string) => {
+                      setCustomFieldFilters((prev) =>
+                        prev.map((item) => (item.id === id ? { ...item, [key]: value } : item))
+                      );
+                    };
+
+                    return (
+                      <div className="space-y-4">
+                        {customFieldLabels.length === 0 && (
+                          <div className="text-sm text-gray-500">
+                            Nenhum campo personalizado encontrado nos leads.
+                          </div>
+                        )}
+                        {customFieldFilters.length === 0 && customFieldLabels.length > 0 && (
+                          <div className="text-sm text-gray-500">
+                            Adicione um filtro usando o nome do campo personalizado.
+                          </div>
+                        )}
+                        <datalist id="custom-field-labels">
+                          {customFieldLabels.map((label) => (
+                            <option key={label} value={label} />
+                          ))}
+                        </datalist>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {customFieldFilters.map((filter) => (
+                            <div key={filter.id} className="border border-gray-200 rounded-lg p-3 space-y-3">
+                              <div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Campo</label>
+                                <input
+                                  type="text"
+                                  list="custom-field-labels"
+                                  value={filter.label}
+                                  onChange={(e) => handleUpdateCustomFilter(filter.id, 'label', e.target.value)}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                  placeholder="Selecione o campo"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Valor</label>
+                                <input
+                                  type="text"
+                                  value={filter.value}
+                                  onChange={(e) => handleUpdateCustomFilter(filter.id, 'value', e.target.value)}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                  placeholder="Digite o valor"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveCustomFilter(filter.id)}
+                                className="text-xs text-red-600 hover:text-red-700"
+                              >
+                                Remover filtro
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleAddCustomFilter}
+                          className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+                          disabled={customFieldLabels.length === 0 || customFieldFilters.length >= 10}
+                        >
+                          Adicionar filtro {customFieldFilters.length}/10
+                        </button>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
             <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200">
               <button
-                onClick={() =>
+                onClick={() => {
                   setFilters({
                     name: '',
                     responsible: '',
@@ -1593,8 +1742,9 @@ export default function Leads() {
                     status: '',
                     createdFrom: '',
                     createdTo: ''
-                  })
-                }
+                  });
+                  setCustomFieldFilters([]);
+                }}
                 className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
               >
                 Limpar
