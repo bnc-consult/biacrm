@@ -1260,11 +1260,9 @@ export default function LeadDetail() {
                 <div>
                   <label className="text-sm font-medium text-gray-700">Origem</label>
                   <div className="mt-1 flex items-center gap-2">
-                    <span className="text-sm text-gray-900">Produto</span>
-                    <span className="text-sm text-gray-500">•</span>
                     <div className="flex items-center gap-1">
                       <FiFileText className="w-4 h-4 text-gray-500" />
-                      <span className="text-sm text-gray-900">Importação</span>
+                      <span className="text-sm text-gray-900">{lead.origin || '—'}</span>
                     </div>
                   </div>
                 </div>

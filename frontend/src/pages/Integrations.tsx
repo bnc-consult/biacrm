@@ -2905,32 +2905,13 @@ export default function Integrations() {
                           />
                         </button>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleCopyInstagram(instagramIntegration)}
-                          className="w-10 h-10 flex items-center justify-center border border-gray-300 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-colors"
-                          title="Copiar"
-                        >
-                          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></rect>
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => handleEditInstagram(instagramIntegration.id)}
-                          className="w-10 h-10 flex items-center justify-center border border-gray-300 rounded-lg hover:bg-pink-50 hover:border-pink-300 transition-colors"
-                          title="Editar"
-                        >
-                          <FiEdit className="w-5 h-5 text-gray-600" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteInstagram(instagramIntegration.id)}
-                          className="w-10 h-10 flex items-center justify-center border border-gray-300 rounded-lg hover:bg-red-50 hover:border-red-300 transition-colors"
-                          title="Excluir"
-                        >
-                          <FiTrash2 className="w-5 h-5 text-gray-600" />
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => handleDeleteInstagram(instagramIntegration.id)}
+                        className="w-10 h-10 flex items-center justify-center border border-gray-300 rounded-lg hover:bg-red-50 hover:border-red-300 transition-colors"
+                        title="Excluir"
+                      >
+                        <FiTrash2 className="w-5 h-5 text-gray-600" />
+                      </button>
                     </div>
                   </div>
                 </div>
